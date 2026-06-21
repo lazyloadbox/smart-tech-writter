@@ -1,0 +1,24 @@
+From: Tech Lead <techlead@example.com>
+To: Doc Team <docs@example.com>
+Subject: Input Package for ESP32 PWM DITA Authoring
+Date: Sat, 20 Jun 2026 09:30:00 +0800
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Team,
+
+Please use the following input to generate a DITA set for ESP32 PWM control.
+We need either one integrated DITA document or a concept/task/reference series.
+
+Scope:
+- Explain LEDC PWM basics on ESP32.
+- Provide a practical task for configuring 5 kHz PWM on GPIO18.
+- Provide a reference section for key Arduino APIs and parameters.
+
+Acceptance Criteria:
+- Steps are executable on ESP32-WROOM-32.
+- Terminology is consistent with DITA best practices.
+- Include troubleshooting for no output and unstable duty cycle.
+
+Regards,
+Tech Lead

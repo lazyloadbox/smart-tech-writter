@@ -1,0 +1,25 @@
+# ESP32 PWM Control DITA Test Set
+
+Objective: Generate one or more DITA topics for ESP32 LEDC PWM control
+Audience: Embedded firmware engineers and technical writers
+
+DITA Deliverables:
+1. concept.dita: Explain PWM and ESP32 LEDC timer/channel model.
+2. task.dita: Step-by-step setup for 5 kHz PWM on GPIO18 with 8-bit resolution.
+3. reference.dita: API table for ledcSetup, ledcAttachPin, ledcWrite.
+
+Hardware Context:
+- Board: ESP32-WROOM-32
+- LED pin: GPIO18
+- PWM Frequency: 5000 Hz
+- PWM Resolution: 8-bit
+
+Test Cases:
+- Duty cycle ramp: 0% -> 25% -> 50% -> 75% -> 100%
+- Verify no visible flicker under room lighting
+- Confirm stable output after 10 minutes
+
+Expected DITA Notes:
+- Include prerequisite section for Arduino ESP32 core installation.
+- Include caution about GPIO capability and shared timer channels.
+- Include code block in each task step where applicable.

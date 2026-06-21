@@ -1,2 +1,2 @@
-// See the Electron documentation for details on how to use preload scripts:
-// https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
+// Dedicated preload entry for Forge/Vite to ensure output filename is preload.js.
+import './preload/index';
