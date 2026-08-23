@@ -21,6 +21,11 @@ on:
         required: false
         default: ''
 
+# 同一时间只允许一个 Release 运行，避免并发发布互相覆盖版本号 / tag
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -32,6 +37,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # 默认用 GITHUB_TOKEN。若推送仍被 "refusing to allow a GitHub App to create or
+          # update workflow" 拒绝，可在仓库 Secrets 配置 RELEASE_TOKEN（细粒度 PAT，
+          # 授予 Contents 读写 + Workflows 读写），自动改用该令牌推送。
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -67,18 +76,59 @@ jobs:
         run: npm run dist:portable
 
       # 把版本号变更提交回仓库并打 tag
+      # 修复要点：
+      #  1. 构建耗时较长，期间远程 main 可能被其他提交推进，直接 push 会报
+      #     "fetch first"。处理：每次推送前 fetch + rebase 到最新 origin/main，
+      #     被拒绝则重新拉取重试（最多 3 次）。
+      #  2. GITHUB_TOKEN 是 GitHub App 安装令牌，没有 workflows 权限；只要推送
+      #     引入 .github/workflows/** 变更就会被拒（曾导致 tag 推送失败）。
+      #     处理：分支先推（rebase 后仅引入纯版本号提交，不涉及 workflow 文件），
+      #     tag 后打后推（不再引入任何新提交，不会触发 workflow 文件保护）。
       - name: Commit version bump and create tag
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          # 原生命令成败统一用 $LASTEXITCODE 判断，避免 runner 的
+          # PSNativeCommandUseErrorActionPreference 直接抛错跳过重试逻辑
+          $PSNativeCommandUseErrorActionPreference = $false
+          $branch = "${{ github.ref_name }}"
+          $tag = "v${{ steps.version.outputs.newVersion }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "chore(release): v${{ steps.version.outputs.newVersion }}"
-          git tag "v${{ steps.version.outputs.newVersion }}"
-          git push origin "HEAD:${{ github.ref_name }}" --tags
+
+          # 远程已存在同名 tag 时提前失败，避免推送到半更新的远程状态
+          git ls-remote --exit-code origin "refs/tags/$tag" | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "远程已存在 tag $tag，请更换版本号后重试" }
+
+          # 先推分支：fetch + rebase 处理并发提交，被拒后重试
+          $pushed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            git fetch origin $branch --prune
+            if ($LASTEXITCODE -ne 0) { throw "git fetch origin $branch 失败" }
+            git rebase "origin/$branch"
+            if ($LASTEXITCODE -ne 0) {
+              git rebase --abort
+              throw "git rebase 失败（版本号可能与其他提交冲突，请手动处理后重跑）"
+            }
+            git push origin "HEAD:$branch"
+            if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+            Write-Output "分支推送被拒绝（第 $attempt 次），远程有并发提交，重新拉取后重试..."
+            Start-Sleep -Seconds 3
+          }
+          if (-not $pushed) { throw "分支推送失败：重试 3 次后远程仍领先" }
+
+          # 分支推送成功后再打 tag 并单独推送：tag 指向已在远程的提交，
+          # 不引入任何新提交，不会触发 GITHUB_TOKEN 对 workflow 文件的保护
+          git tag $tag
+          git push origin $tag
+          if ($LASTEXITCODE -ne 0) { throw "tag $tag 推送失败" }
 
       # 创建 GitHub Release 并附带全部构建产物
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ steps.version.outputs.newVersion }}"
           files: |
