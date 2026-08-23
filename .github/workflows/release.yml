@@ -36,7 +36,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 必须 Node 22+：better-sqlite3 v12.11.1 已不再发布 Node 20 (ABI 115) 的预编译二进制，
+          # Node 20 下 npm ci 会退回 node-gyp 源码编译，而 windows-latest 的 VS 2026 不被 node-gyp 识别导致失败。
+          # Node 24 (ABI 137) 有官方预编译产物，npm ci / electron-forge rebuild 均直接下载，无需本地编译器。
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
