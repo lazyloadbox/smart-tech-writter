@@ -3,6 +3,11 @@ import type { DocumentDraft } from '../../../shared/types/document.types';
 /**
  * Simple DITA topic builder — converts a Markdown draft into a DITA 1.3 concept topic.
  *
+ * Inline Markdown (bold/italic/code/links/strikethrough) is converted to DITA
+ * inline elements (`<b>`, `<i>`, `<codeph>`, `<xref>`, `<u>`), and any leftover
+ * Markdown markers are stripped — so no literal `**` / `*` ever leaks into the
+ * generated DITA (previously the DITA AI review flagged these as issues).
+ *
  * Structure:
  *   <?xml version="1.0" encoding="UTF-8"?>
  *   <!DOCTYPE concept PUBLIC "-//OASIS//DTD DITA Concept//EN" "concept.dtd">
@@ -25,6 +30,51 @@ function escapeXml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/**
+ * Convert inline Markdown formatting into DITA inline elements, then escape
+ * the remaining text for XML.
+ *
+ * Handles: **bold** / __bold__, *italic* / _italic_, `code`, [text](url),
+ * ![alt](url), ~~strikethrough~~. Any leftover Markdown markers (unmatched
+ * `**`, `*`, backticks, etc.) are stripped so no literal `**` / `*` leaks
+ * into the DITA output — previously the LLM-generated Markdown drafts were
+ * only XML-escaped, so `**Duty control**` appeared verbatim in the DITA and
+ * triggered repeated "uses ** around ..." warnings in the DITA AI review.
+ */
+function inlineMarkdownToDita(text: string): string {
+  // Escape XML first: the Markdown markers contain no XML-special characters,
+  // so the regexes below operate safely on the escaped text.
+  let out = escapeXml(text);
+
+  // Images: ![alt](url) → alt text (DITA concept topics don't inline images here).
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+\))/g, '$1');
+
+  // Bold: **text** or __text__.
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  out = out.replace(/__([^_]+)__/g, '<b>$1</b>');
+
+  // Italic: *text* or _text_ (single markers; content must not start/end with space).
+  out = out.replace(/(^|[^*])\*([^*\s][^*\n]*?)\*(?!\*)/g, '$1<i>$2</i>');
+  out = out.replace(/(^|[^_])_([^_\s][^_\n]*?)_(?!_)/g, '$1<i>$2</i>');
+
+  // Inline code: `code`.
+  out = out.replace(/`([^`\n]+)`/g, '<codeph>$1</codeph>');
+
+  // Links: [text](url).
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<xref href="$2">$1</xref>');
+
+  // Strikethrough: ~~text~~ → underline (DITA has no native strikethrough).
+  out = out.replace(/~~([^~]+)~~/g, '<u>$1</u>');
+
+  // Strip any leftover Markdown emphasis markers so they never appear literally.
+  out = out.replace(/\*\*/g, '').replace(/__/g, '');
+  out = out.replace(/(^|[^*\w])\*([^*\n]{2,})\*(?!\*)/g, '$1$2');
+  out = out.replace(/`/g, '');
+  out = out.replace(/~~/g, '');
+
+  return out;
 }
 
 function slugify(text: string): string {
@@ -125,7 +175,7 @@ function blocksToDitaBody(blocks: Block[]): string {
 
   function flushSection(): void {
     if (currentSection && currentSection.bodyParts.length > 0) {
-      parts.push(`<section><title>${escapeXml(currentSection.title)}</title>`);
+      parts.push(`<section><title>${inlineMarkdownToDita(currentSection.title)}</title>`);
       parts.push(...currentSection.bodyParts);
       parts.push('</section>');
     }
@@ -149,7 +199,7 @@ function blocksToDitaBody(blocks: Block[]): string {
       case 'h3':
         // H3 inside a section as a sub-heading paragraph
         if (currentSection) {
-          currentSection.bodyParts.push(`<p><b>${escapeXml(block.content ?? '')}</b></p>`);
+          currentSection.bodyParts.push(`<p><b>${inlineMarkdownToDita(block.content ?? '')}</b></p>`);
         } else {
           currentSection = { title: block.content ?? '', bodyParts: [] };
         }
@@ -157,15 +207,15 @@ function blocksToDitaBody(blocks: Block[]): string {
 
       case 'p':
         if (currentSection) {
-          currentSection.bodyParts.push(`<p>${escapeXml(block.content ?? '')}</p>`);
+          currentSection.bodyParts.push(`<p>${inlineMarkdownToDita(block.content ?? '')}</p>`);
         } else {
-          parts.push(`<p>${escapeXml(block.content ?? '')}</p>`);
+          parts.push(`<p>${inlineMarkdownToDita(block.content ?? '')}</p>`);
         }
         break;
 
       case 'ul':
         if (block.items && block.items.length > 0) {
-          const ulContent = block.items.map((item) => `<li><p>${escapeXml(item)}</p></li>`).join('');
+          const ulContent = block.items.map((item) => `<li><p>${inlineMarkdownToDita(item)}</p></li>`).join('');
           const ulTag = `<ul>${ulContent}</ul>`;
           if (currentSection) {
             currentSection.bodyParts.push(ulTag);
@@ -177,7 +227,7 @@ function blocksToDitaBody(blocks: Block[]): string {
 
       case 'ol':
         if (block.items && block.items.length > 0) {
-          const olContent = block.items.map((item) => `<li><p>${escapeXml(item)}</p></li>`).join('');
+          const olContent = block.items.map((item) => `<li><p>${inlineMarkdownToDita(item)}</p></li>`).join('');
           const olTag = `<ol>${olContent}</ol>`;
           if (currentSection) {
             currentSection.bodyParts.push(olTag);
@@ -232,7 +282,7 @@ export function buildDitaXml(draft: DocumentDraft): string {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE concept PUBLIC "-//OASIS//DTD DITA Concept//EN" "concept.dtd">',
     `<concept id="${topicId}">`,
-    `  <title>${escapeXml(titleText)}</title>`,
+    `  <title>${inlineMarkdownToDita(titleText)}</title>`,
     '  <conbody>',
     conbody
       .split('\n')
@@ -270,8 +320,9 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
     errors.push('缺少 XML 声明 (<?xml ... ?>)');
   }
 
-  // Find all tags (opening, closing, self-closing, processing instructions, comments).
-  const tagRegex = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?([a-zA-Z][\w.-]*)((?:\s+[^<>]*?)?)(\/?)>/g;
+  // Find all tags (opening, closing, self-closing, processing instructions,
+  // comments, CDATA, and the DOCTYPE declaration).
+  const tagRegex = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[\s\S]*?>|<\?[\s\S]*?\?>|<\/?([a-zA-Z][\w.-]*)((?:\s+[^<>]*?)?)(\/?)>/g;
   const stack: string[] = [];
   let match: RegExpExecArray | null;
   let rootCount = 0;
@@ -279,8 +330,8 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
 
   while ((match = tagRegex.exec(text)) !== null) {
     const full = match[0];
-    // Skip comments / CDATA / processing instructions (no tag name captured).
-    if (full.startsWith('<!--') || full.startsWith('<![CDATA[') || full.startsWith('<?')) {
+    // Skip comments / CDATA / DOCTYPE / processing instructions (no tag name captured).
+    if (full.startsWith('<!--') || full.startsWith('<![CDATA[') || full.startsWith('<!DOCTYPE') || full.startsWith('<?')) {
       lastTagEnd = tagRegex.lastIndex;
       continue;
     }
@@ -319,4 +370,100 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Best-effort repair of common XML well-formedness issues (M8 follow-up).
+ *
+ * Fixes:
+ *  1. Unescaped `&` in text content → `&amp;` (valid entity references are kept).
+ *  2. Stray `<` in text content → `&lt;` (tags/comments/CDATA/DOCTYPE/PI are kept).
+ *  3. Unclosed tags at the end of the document → closed in reverse order.
+ *
+ * Structural issues that cannot be safely auto-fixed (e.g. mismatched tag
+ * nesting, multiple roots) are left as-is and will still be reported by
+ * `validateDitaXml`.
+ */
+export function repairDitaXml(xml: string): string {
+  const text = xml ?? '';
+  const tagRegex = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[\s\S]*?>|<\?[\s\S]*?\?>|<\/?([a-zA-Z][\w.-]*)((?:\s+[^<>]*?)?)(\/?)>/g;
+  const stack: string[] = [];
+  let out = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagRegex.exec(text)) !== null) {
+    // Text between tokens: escape stray `&` / `<`.
+    out += escapeXmlText(match.index > lastIndex ? text.slice(lastIndex, match.index) : '');
+    const full = match[0];
+    if (full.startsWith('<!--') || full.startsWith('<![CDATA[') || full.startsWith('<!DOCTYPE') || full.startsWith('<?')) {
+      out += full;
+    } else if (full.startsWith('</')) {
+      const tagName = match[1];
+      const idx = stack.lastIndexOf(tagName);
+      if (idx >= 0) {
+        // Implicitly close any tags opened after `tagName` first, then let
+        // `full` close `tagName` itself (fixes e.g. `</conbody>` while `<p>`
+        // is still open → inserts `</p>` before `</conbody>`).
+        for (let j = stack.length - 1; j > idx; j--) {
+          out += `</${stack[j]}>`;
+        }
+        stack.length = idx;
+      }
+      out += full;
+    } else if (match[3] !== '/') {
+      stack.push(match[1]);
+      out += full;
+    } else {
+      out += full;
+    }
+    lastIndex = tagRegex.lastIndex;
+  }
+  // Trailing text after the last token.
+  out += escapeXmlText(text.slice(lastIndex));
+
+  // Close any tags left open at the end of the document.
+  for (let i = stack.length - 1; i >= 0; i--) {
+    out += `</${stack[i]}>`;
+  }
+
+  return out;
+}
+
+/** Escape `&` (unless a valid entity) and stray `<` in XML text content. */
+function escapeXmlText(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/&(?!(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][\w.]*);)/g, '&amp;')
+    .replace(/</g, '&lt;');
+}
+
+export interface DitaValidationResult {
+  /** Final content (auto-repaired if issues were found and fixable). */
+  content: string;
+  /** Whether the final content is well-formed. */
+  valid: boolean;
+  /** Whether auto-repair modified the content. */
+  repaired: boolean;
+  /** Remaining validation errors (empty when valid). */
+  errors: string[];
+}
+
+/**
+ * Validate DITA XML and, if it fails, attempt a best-effort auto-repair.
+ * Returns the (possibly repaired) content plus the final validation state.
+ */
+export function validateAndRepairDitaXml(xml: string): DitaValidationResult {
+  const first = validateDitaXml(xml);
+  if (first.valid) {
+    return { content: xml, valid: true, repaired: false, errors: [] };
+  }
+  const repairedXml = repairDitaXml(xml);
+  const second = validateDitaXml(repairedXml);
+  return {
+    content: repairedXml,
+    valid: second.valid,
+    repaired: repairedXml !== xml,
+    errors: second.errors,
+  };
 }

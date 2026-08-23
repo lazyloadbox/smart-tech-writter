@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useWorkflow } from './hooks/useWorkflow';
 import { StageNavigation } from './components/StageNavigation';
 import { InputPanel } from './components/InputPanel';
@@ -10,13 +10,14 @@ import { LogViewer } from './components/LogViewer';
 import { AIStreamViewer } from './components/AIStreamViewer';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { CollapsibleSection } from './components/CollapsibleSection';
-import type { UploadedFile, LocalizeLanguage } from '../../../shared/types/document.types';
+import { XmlHighlight } from './components/xml/XmlHighlight';
+import type { UploadedFile, LocalizeLanguage, DocumentOutline } from '../../../shared/types/document.types';
 import type { StageName } from '../../../shared/types/workflow.types';
 
 const LANG_OPTIONS: { value: LocalizeLanguage; label: string }[] = [
+  { value: 'en', label: 'English（英文）' },
   { value: 'zh-CN', label: '简体中文（中国大陆）' },
   { value: 'zh-TW', label: '繁體中文（台灣 / 台湾）' },
-  { value: 'zh-HK', label: '繁體中文（香港）' },
 ];
 
 export const DocGeneratorTab: React.FC = () => {
@@ -24,7 +25,24 @@ export const DocGeneratorTab: React.FC = () => {
   const [isStarting, setIsStarting] = useState(false);
   const [localFiles, setLocalFiles] = useState<UploadedFile[]>([]);
   const [selectedLang, setSelectedLang] = useState<LocalizeLanguage>('zh-CN');
-  const [skipLocalize, setSkipLocalize] = useState(false);
+  // Default to skipping localization (English-only docs); the standalone 本地化 feature handles DITA translation.
+  const [skipLocalize, setSkipLocalize] = useState(true);
+
+  // Auto-scroll the running content area so the latest AI stream output stays visible.
+  // Auto-scroll pauses when the user scrolls up, and resumes when they return to the bottom.
+  const runningScrollRef = useRef<HTMLDivElement>(null);
+  const [runningAutoScroll, setRunningAutoScroll] = useState(true);
+  useEffect(() => {
+    if (state.status === 'RUNNING' && runningAutoScroll && runningScrollRef.current) {
+      runningScrollRef.current.scrollTop = runningScrollRef.current.scrollHeight;
+    }
+  }, [state.streamChunks, state.status, runningAutoScroll]);
+
+  const handleRunningScroll = () => {
+    const el = runningScrollRef.current;
+    if (!el) return;
+    setRunningAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+  };
 
   const handleFilesAdded = (newFiles: UploadedFile[]) => {
     setLocalFiles((prev) => {
@@ -37,11 +55,20 @@ export const DocGeneratorTab: React.FC = () => {
     setLocalFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
-  const handleStartWorkflow = async (filePaths: string[]) => {
+  const handleUpdateFileInstruction = (id: string, instruction: string) => {
+    setLocalFiles((prev) => prev.map((f) => (f.id === id ? { ...f, parseInstruction: instruction } : f)));
+  };
+
+  const handleStartWorkflow = async (
+    filePaths: string[],
+    outline?: DocumentOutline,
+    parseInstruction?: string,
+    fileInstructions?: Record<string, string>
+  ) => {
     console.info('[WF][UI] Start button clicked', { fileCount: filePaths.length, filePaths });
     setIsStarting(true);
     try {
-      await startWorkflow(filePaths);
+      await startWorkflow(filePaths, outline, parseInstruction, fileInstructions);
       console.info('[WF][UI] Workflow start request completed');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -57,7 +84,7 @@ export const DocGeneratorTab: React.FC = () => {
 
   const handleNewProject = () => {
     setLocalFiles([]);
-    setSkipLocalize(false);
+    setSkipLocalize(true);
     setSelectedLang('zh-CN');
     state.reset();
   };
@@ -77,6 +104,7 @@ export const DocGeneratorTab: React.FC = () => {
           files={status === 'IDLE' ? localFiles : state.inputFiles}
           onFilesAdded={handleFilesAdded}
           onRemoveFile={handleRemoveFile}
+          onUpdateFileInstruction={handleUpdateFileInstruction}
           onStartWorkflow={handleStartWorkflow}
           isStarting={isStarting}
         />
@@ -86,8 +114,9 @@ export const DocGeneratorTab: React.FC = () => {
     // Running stages (non-interactive) — show detailed progress
     if (status === 'RUNNING') {
       return (
-        <div className="p-6 space-y-4 overflow-y-auto">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col h-full overflow-hidden">
+          {/* Fixed header: stage progress + controls */}
+          <div className="shrink-0 px-6 pt-4 pb-2 flex items-center gap-3">
             <WorkflowProgress
               stage={currentStage}
               status={status}
@@ -100,7 +129,7 @@ export const DocGeneratorTab: React.FC = () => {
                 currentStage === 'post_edit_review' ? 'AI 正在进行编辑后审查...' :
                 currentStage === 'localize' ? `AI 正在本地化为 ${
                   state.targetLanguage === 'zh-TW' ? '繁體中文（台灣）' :
-                  state.targetLanguage === 'zh-HK' ? '繁體中文（香港）' : '简体中文'
+                  state.targetLanguage === 'en' ? 'English（英文）' : '简体中文'
                 }...` :
                 currentStage === 'localize_ai_review' ? 'AI 正在审查本地化质量...' :
                 currentStage === 'dita_build' ? '正在生成 DITA XML 文档...' :
@@ -138,127 +167,129 @@ export const DocGeneratorTab: React.FC = () => {
             </button>
           </div>
 
-          {/* Live progress detail (e.g. current file being processed) */}
-          {state.currentProgressMessage && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/70 rounded border border-gray-700 text-xs text-blue-300">
-              <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-              <span>{state.currentProgressMessage}</span>
-            </div>
-          )}
+          {/* Single scrollable content area — one scrollbar for all live output */}
+          <div
+            ref={runningScrollRef}
+            onScroll={handleRunningScroll}
+            className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 space-y-4"
+          >
+            {/* Live progress detail (e.g. current file being processed) */}
+            {state.currentProgressMessage && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/70 rounded border border-gray-700 text-xs text-blue-300">
+                <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+                <span>{state.currentProgressMessage}</span>
+              </div>
+            )}
 
-          {/* File list during upload_parse stage */}
-          {currentStage === 'upload_parse' && state.inputFiles.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide">📂 待处理文件</p>
-              {state.inputFiles.map((f) => (
-                <div key={f.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded text-xs">
-                  <span className="text-gray-300 truncate flex-1">📄 {f.name}</span>
-                  <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${
-                    f.parseStatus === 'done' ? 'bg-green-900/40 text-green-300' :
-                    f.parseStatus === 'error' ? 'bg-red-900/40 text-red-300' :
-                    f.parseStatus === 'parsing' ? 'bg-blue-900/40 text-blue-300 animate-pulse' :
-                    'bg-gray-700 text-gray-400'
-                  }`}>
-                    {f.parseStatus === 'done' ? '✓ 完成' :
-                     f.parseStatus === 'error' ? '✗ 失败' :
-                     f.parseStatus === 'parsing' ? '⟳ 解析中' : '等待中'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+            {/* File list during upload_parse stage */}
+            {currentStage === 'upload_parse' && state.inputFiles.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide">📂 待处理文件</p>
+                {state.inputFiles.map((f) => (
+                  <div key={f.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded text-xs">
+                    <span className="text-gray-300 truncate flex-1">📄 {f.name}</span>
+                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${
+                      f.parseStatus === 'done' ? 'bg-green-900/40 text-green-300' :
+                      f.parseStatus === 'error' ? 'bg-red-900/40 text-red-300' :
+                      f.parseStatus === 'parsing' ? 'bg-blue-900/40 text-blue-300 animate-pulse' :
+                      'bg-gray-700 text-gray-400'
+                    }`}>
+                      {f.parseStatus === 'done' ? '✓ 完成' :
+                       f.parseStatus === 'error' ? '✗ 失败' :
+                       f.parseStatus === 'parsing' ? '⟳ 解析中' : '等待中'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
-          {/* AI Streaming Output */}
-          <div className="max-h-80 overflow-y-auto">
+            {/* AI Streaming Output */}
             <AIStreamViewer
               chunks={state.streamChunks}
               currentStage={currentStage}
               isRunning={status === 'RUNNING'}
             />
-          </div>
 
-          {/* Show live draft preview during draft/review stages */}
-          {(currentStage === 'draft' || currentStage === 'ai_review') && state.drafts.length > 0 && (
-            <CollapsibleSection
-              key={`draft-preview-${currentStage}`}
-              title="📝 草稿预览（实时更新）"
-              defaultExpanded={true}
-            >
-              <div className="max-h-96 overflow-y-auto">
+            {/* Show live draft preview during draft/review stages */}
+            {(currentStage === 'draft' || currentStage === 'ai_review') && state.drafts.length > 0 && (
+              <CollapsibleSection
+                key={`draft-preview-${currentStage}`}
+                title="📝 草稿预览（实时更新）"
+                defaultExpanded={true}
+              >
                 <DraftViewer drafts={state.drafts} />
-              </div>
-            </CollapsibleSection>
-          )}
-          {/* Show live DITA XML preview during dita_build / dita_ai_review stages */}
-          {(currentStage === 'dita_build' || currentStage === 'dita_ai_review') && state.ditaDocuments.length > 0 && (
-            <CollapsibleSection
-              key={`dita-preview-${currentStage}`}
-              title="📦 DITA XML 预览（实时更新）"
-              defaultExpanded={true}
-            >
-              <div className="max-h-96 overflow-y-auto">
+              </CollapsibleSection>
+            )}
+            {/* Show live DITA XML preview during dita_build / dita_ai_review stages */}
+            {(currentStage === 'dita_build' || currentStage === 'dita_ai_review') && state.ditaDocuments.length > 0 && (
+              <CollapsibleSection
+                key={`dita-preview-${currentStage}`}
+                title="📦 DITA XML 预览（实时更新）"
+                defaultExpanded={true}
+              >
                 {state.ditaDocuments.map((d) => (
                   <div key={d.id} className="mb-3">
                     <p className="text-xs text-gray-400 mb-1 font-medium">📄 {d.title}.dita</p>
-                    <pre className="p-2 bg-gray-900 rounded text-xs text-gray-300 overflow-x-auto whitespace-pre border border-gray-700">{d.content}</pre>
+                    <XmlHighlight code={d.content} />
                   </div>
                 ))}
-              </div>
-            </CollapsibleSection>
-          )}
-          {/* Show analysis summary during analyze, draft, and review stages */}
-          {(currentStage === 'analyze' || currentStage === 'draft' || currentStage === 'ai_review') && state.analysisResults.length > 0 && (
-            <CollapsibleSection
-              key={`analysis-${currentStage}`}
-              title="🔍 分析结果"
-              defaultExpanded={false}
-            >
-              <div className="max-h-80 overflow-y-auto space-y-2">
-                {state.analysisResults.map((r) => (
-                  <div key={r.fileId} className="p-3 bg-gray-800 rounded border border-gray-700">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-gray-200">📄 {r.fileName}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded">AI 解析</span>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1 leading-relaxed">{r.summary}</p>
-                    {r.keyPoints && r.keyPoints.length > 0 && (
-                      <div className="mt-2">
-                        <span className="text-[10px] font-medium text-gray-500 uppercase">关键要点</span>
-                        <ul className="list-disc list-inside text-xs text-gray-300 mt-0.5 space-y-0.5">
-                          {r.keyPoints.map((kp, i) => (
-                            <li key={i}>{kp}</li>
-                          ))}
-                        </ul>
+              </CollapsibleSection>
+            )}
+            {/* Show analysis summary during analyze, draft, and review stages */}
+            {(currentStage === 'analyze' || currentStage === 'draft' || currentStage === 'ai_review') && state.analysisResults.length > 0 && (
+              <CollapsibleSection
+                key={`analysis-${currentStage}`}
+                title="🔍 分析结果"
+                defaultExpanded={false}
+              >
+                <div className="space-y-2">
+                  {state.analysisResults.map((r) => (
+                    <div key={r.fileId} className="p-3 bg-gray-800 rounded border border-gray-700">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-gray-200">📄 {r.fileName}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded">AI 解析</span>
                       </div>
-                    )}
-                    {r.technicalTerms && r.technicalTerms.length > 0 && (
-                      <div className="mt-2">
-                        <span className="text-[10px] font-medium text-gray-500 uppercase">技术术语</span>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {r.technicalTerms.map((term) => (
-                            <span key={term} className="px-1.5 py-0.5 bg-green-900/40 text-green-300 text-[10px] rounded border border-green-800/50">
-                              {term}
+                      <p className="text-xs text-gray-400 mt-1 leading-relaxed">{r.summary}</p>
+                      {r.keyPoints && r.keyPoints.length > 0 && (
+                        <div className="mt-2">
+                          <span className="text-[10px] font-medium text-gray-500 uppercase">关键要点</span>
+                          <ul className="list-disc list-inside text-xs text-gray-300 mt-0.5 space-y-0.5">
+                            {r.keyPoints.map((kp, i) => (
+                              <li key={i}>{kp}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {r.technicalTerms && r.technicalTerms.length > 0 && (
+                        <div className="mt-2">
+                          <span className="text-[10px] font-medium text-gray-500 uppercase">技术术语</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {r.technicalTerms.map((term) => (
+                              <span key={term} className="px-1.5 py-0.5 bg-green-900/40 text-green-300 text-[10px] rounded border border-green-800/50">
+                                {term}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {r.keywords.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {r.keywords.map((kw) => (
+                            <span key={kw} className="px-1.5 py-0.5 bg-blue-900/50 text-blue-300 text-[10px] rounded">
+                              {kw}
                             </span>
                           ))}
                         </div>
-                      </div>
-                    )}
-                    {r.keywords.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {r.keywords.map((kw) => (
-                          <span key={kw} className="px-1.5 py-0.5 bg-blue-900/50 text-blue-300 text-[10px] rounded">
-                            {kw}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CollapsibleSection>
-          )}
-          {/* Show processing hint */}
-          <div className="flex items-center gap-2 text-xs text-gray-500">
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleSection>
+            )}
+          </div>
+
+          {/* Fixed footer hint — always visible, no empty gap below */}
+          <div className="shrink-0 px-6 py-2 border-t border-gray-700/60 bg-gray-900/70 flex items-center gap-2 text-xs text-gray-500">
             <span className="inline-block w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
             正在处理中，请稍候... 详细过程请查看下方日志面板
           </div>
@@ -693,7 +724,7 @@ export const DocGeneratorTab: React.FC = () => {
                   <span className="text-[10px] px-1.5 py-0.5 bg-orange-900/40 text-orange-300 rounded">DITA XML</span>
                   <span className="text-[10px] text-gray-500 ml-auto">{d.content.length} 字符</span>
                 </div>
-                <pre className="p-2 bg-gray-900 rounded text-xs text-gray-300 overflow-x-auto whitespace-pre border border-gray-700 max-h-96">{d.content}</pre>
+                <XmlHighlight code={d.content} className="max-h-96" />
               </div>
             ))}
           </div>
@@ -732,6 +763,7 @@ export const DocGeneratorTab: React.FC = () => {
               }
               title="DITA XML（可编辑）"
               submitLabel="确认完成，导出 DITA 文件 ▶"
+              editorMode="xml"
             />
           </div>
         </div>

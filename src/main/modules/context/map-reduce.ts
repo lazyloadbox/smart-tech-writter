@@ -1,5 +1,7 @@
 import type { AIProvider } from '../ai-providers/base.provider';
 import { chunkText } from '../file-readers/base.reader';
+import { PROMPTS, buildSystemPrompt, buildMapUserPrompt, buildReduceUserPrompt } from '../prompts';
+import type { PromptOverrides } from '../prompts';
 
 export interface SummarizeOptions {
   provider: AIProvider;
@@ -12,20 +14,11 @@ export interface SummarizeOptions {
   /** AbortSignal to cancel in-flight summarization calls (pause / go-back). */
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
+  /** 提示词覆盖：map / reduce 的 system prompt 可被用户配置覆盖。 */
+  promptOverrides?: PromptOverrides;
+  /** 用户解析提示词：注入 map / reduce 的 user prompt，指导摘要重点与分析设计。 */
+  instruction?: string;
 }
-
-const MAP_SYSTEM_PROMPT = `You are a technical document summarizer.
-Summarize the given section of a technical document. Preserve:
-- All key technical facts, specifications, numbers, units, and parameter values
-- Important terminology, acronyms, and product/component names
-- Code/API references and configuration details
-- Relationships between concepts
-Write a dense, factual summary (up to 400 words). Do not add commentary or opinions.`;
-
-const REDUCE_SYSTEM_PROMPT = `You are merging section summaries of a technical document into a single coherent overview.
-Combine the following section summaries into one dense technical summary (up to 800 words).
-Preserve all key technical facts, specifications, numbers, terminology, and relationships.
-Remove redundancy between sections. Do not add commentary or opinions.`;
 
 /**
  * Map-reduce summarization for long documents (fixes R2).
@@ -37,10 +30,14 @@ Remove redundancy between sections. Do not add commentary or opinions.`;
  * head and tail stay covered instead of a hard head-only truncation.
  */
 export async function summarizeLongText(text: string, opts: SummarizeOptions): Promise<string> {
-  const { provider, chunkSize = 4000, overlap = 200, maxChunks = 20, signal, onProgress } = opts;
+  const { provider, chunkSize = 4000, overlap = 200, maxChunks = 20, signal, onProgress, promptOverrides, instruction } = opts;
   const trimmed = (text ?? '').trim();
   if (!trimmed) return '';
   if (trimmed.length <= chunkSize) return trimmed;
+
+  // System prompts are built per-call so user-configured overrides take effect.
+  const mapSystemPrompt = buildSystemPrompt(PROMPTS.mapReduce.map, promptOverrides?.['mapReduce.map']);
+  const reduceSystemPrompt = buildSystemPrompt(PROMPTS.mapReduce.reduce, promptOverrides?.['mapReduce.reduce']);
 
   const chunks = selectChunks(chunkText(trimmed, chunkSize, overlap), maxChunks);
   onProgress?.(`文档较长（${trimmed.length} 字符），已分为 ${chunks.length} 段进行分段摘要...`);
@@ -50,8 +47,8 @@ export async function summarizeLongText(text: string, opts: SummarizeOptions): P
     onProgress?.(`正在摘要第 ${i + 1}/${chunks.length} 段...`);
     const resp = await provider.complete(
       [
-        { role: 'system', content: MAP_SYSTEM_PROMPT },
-        { role: 'user', content: `Section ${i + 1}/${chunks.length}:\n\n${chunks[i]}` },
+        { role: 'system', content: mapSystemPrompt },
+        { role: 'user', content: buildMapUserPrompt(i + 1, chunks.length, chunks[i], instruction) },
       ],
       { signal }
     );
@@ -64,8 +61,8 @@ export async function summarizeLongText(text: string, opts: SummarizeOptions): P
   const combined = summaries.map((s, i) => `## Section ${i + 1}\n\n${s}`).join('\n\n');
   const resp = await provider.complete(
     [
-      { role: 'system', content: REDUCE_SYSTEM_PROMPT },
-      { role: 'user', content: combined },
+      { role: 'system', content: reduceSystemPrompt },
+      { role: 'user', content: buildReduceUserPrompt(combined, instruction) },
     ],
     { signal }
   );

@@ -1,0 +1,43 @@
+name: Build Windows
+
+# 手动构建（不改变版本号，仅产出安装包 + 单文件 exe 供测试/分发）
+# 发布新版本请使用 Release 工作流（自动升级版本号 + 构建 + 打 tag + 创建 GitHub Release）
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 构建 Windows 安装包（Squirrel Setup.exe + nupkg）
+      # 内部流程：Vite 构建 main/preload/renderer → electron-forge package（含 better-sqlite3 原生模块 rebuild）→ Squirrel 打包
+      - name: Build Windows installer
+        run: npm run make
+
+      # 构建单文件 portable exe（electron-builder，自解压运行，无需安装）
+      # 依赖上一步生成的 .vite 构建产物
+      - name: Build portable single-file exe
+        run: npm run dist:portable
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            out/make/squirrel.windows/x64/*.exe
+            out/make/squirrel.windows/x64/*.nupkg
+            out/make/squirrel.windows/x64/RELEASES
+            dist/*.exe
+          if-no-files-found: error

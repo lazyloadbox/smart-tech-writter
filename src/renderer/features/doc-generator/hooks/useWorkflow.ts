@@ -79,18 +79,26 @@ export function useWorkflow() {
     };
   }, [store.projectId]);
 
-  const startWorkflow = useCallback(async (filePaths: string[]) => {
-    console.info('[WF][Renderer][Hook] startWorkflow called', { fileCount: filePaths.length });
-    store.clearStreamChunks();
-    const initialState = await workflowApi.start(filePaths);
-    store.setState({ ...initialState, workflowLogs: [] });
-    store.clearStreamChunks();
-    console.info('[WF][Renderer][Hook] Initial workflow state applied', {
-      projectId: initialState.projectId,
-      stage: initialState.currentStage,
-      status: initialState.status,
-    });
-  }, []);
+  const startWorkflow = useCallback(
+    async (
+      filePaths: string[],
+      documentOutline?: import('../../../../shared/types/document.types').DocumentOutline,
+      parseInstruction?: string,
+      fileInstructions?: Record<string, string>
+    ) => {
+      console.info('[WF][Renderer][Hook] startWorkflow called', { fileCount: filePaths.length });
+      store.clearStreamChunks();
+      const initialState = await workflowApi.start(filePaths, documentOutline, parseInstruction, fileInstructions);
+      store.setState({ ...initialState, workflowLogs: [] });
+      store.clearStreamChunks();
+      console.info('[WF][Renderer][Hook] Initial workflow state applied', {
+        projectId: initialState.projectId,
+        stage: initialState.currentStage,
+        status: initialState.status,
+      });
+    },
+    []
+  );
 
   const goBack = useCallback(
     (targetStage: StageName) => {

@@ -1,19 +1,13 @@
 import { BaseAgent } from './base.agent';
 import { summarizeLongText } from '../context';
+import { PROMPTS, buildFileParserUserPrompt } from '../prompts';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { UploadedFile } from '../../../shared/types/document.types';
 
 // Parses a single file's extracted text and produces a structured AI summary
 export class FileParserAgent extends BaseAgent {
   get systemPrompt(): string {
-    return this.config.systemPromptTemplate ?? `You are a technical document analyst for industrial automation systems.
-Given raw extracted text from a document, produce a JSON object with:
-- summary: a concise summary of the document content
-- keyPoints: array of key technical points (max 10)
-- keywords: array of relevant technical keywords (max 20)
-- technicalTerms: array of domain-specific terms found (e.g., PLC, HMI, SCADA)
-
-Respond ONLY with valid JSON, no markdown fences.`;
+    return this.buildSystemPrompt(PROMPTS.fileParser);
   }
 
   async execute(state: DocGenState): Promise<Partial<DocGenState>> {
@@ -24,14 +18,18 @@ Respond ONLY with valid JSON, no markdown fences.`;
         continue;
       }
       try {
+        // 单文件提示词优先，其次使用全局解析提示词。
+        const instruction = file.parseInstruction?.trim() || this.config.parseInstruction?.trim() || undefined;
         // Long documents go through map-reduce summarization instead of a hard
         // head-only truncation, so key facts from the whole document survive.
         const context = await summarizeLongText(file.extractedText ?? '', {
           provider: this.provider,
           signal: this.config.signal,
           onProgress: (msg) => this.config.onProgress?.(msg),
+          promptOverrides: this.config.promptOverrides,
+          instruction,
         });
-        const prompt = `Document name: ${file.name}\n\nExtracted text:\n${context}`;
+        const prompt = buildFileParserUserPrompt(file.name, context, instruction);
         const response = await this.callLLM(prompt);
         let parsed: { summary: string; keyPoints: string[]; keywords: string[]; technicalTerms: string[] };
         try {

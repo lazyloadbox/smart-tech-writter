@@ -11,10 +11,26 @@ export interface CompletionOptions {
   signal?: AbortSignal;
 }
 
+export type AIStreamChunkType = 'thinking' | 'content';
+
+/**
+ * A single streamed delta. Reasoning models (DeepSeek thinking variants, etc.)
+ * emit `reasoning_content` deltas BEFORE the visible `content`; distinguishing
+ * the two lets the UI surface the thinking phase live instead of showing a
+ * blank spinner while the model "thinks".
+ */
+export interface AIStreamChunk {
+  type: AIStreamChunkType;
+  text: string;
+}
+
 export interface AIProvider {
   readonly providerName: string;
   complete(messages: AIMessage[], options?: CompletionOptions): Promise<string>;
+  /** Content-only stream (backward-compatible; delegates to streamDetailed). */
   stream(messages: AIMessage[], options?: CompletionOptions): AsyncIterable<string>;
+  /** Stream with reasoning deltas distinguished from visible output. */
+  streamDetailed(messages: AIMessage[], options?: CompletionOptions): AsyncIterable<AIStreamChunk>;
   embed(text: string): Promise<number[]>;
 }
 

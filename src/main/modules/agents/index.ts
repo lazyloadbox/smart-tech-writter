@@ -6,3 +6,4 @@ export { WriterAgent } from './writer.agent';
 export { ReviewerAgent } from './reviewer.agent';
 export type { ReviewMode } from './reviewer.agent';
 export { LocalizerAgent } from './localizer.agent';
+export { DitaLocalizerAgent } from './dita-localizer.agent';

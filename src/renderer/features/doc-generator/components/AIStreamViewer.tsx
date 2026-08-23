@@ -4,6 +4,8 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface StreamChunk {
   stage: StageName;
+  /** `thinking` = reasoning_content (model's thinking), `content` = visible output. */
+  type: 'thinking' | 'content';
   content: string;
   timestamp: string;
 }
@@ -227,28 +229,38 @@ const StructuredJsonView: React.FC<{ data: Record<string, unknown>; title?: stri
 };
 
 export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentStage, isRunning }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const thinkingRef = useRef<HTMLDivElement>(null);
   const [showRaw, setShowRaw] = useState(false);
   const label = STAGE_LABELS[currentStage] ?? currentStage;
   const description = STAGE_DESCRIPTIONS[currentStage] ?? '';
 
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [chunks]);
-
   // ── Hooks must be called unconditionally (Rules of Hooks) ──────────────
-  const fullText = useMemo(
+  // Visible output only — JSON parsing / raw view never include thinking text.
+  const contentText = useMemo(
     () => chunks
-      .filter((c) => c.stage === currentStage)
+      .filter((c) => c.stage === currentStage && c.type === 'content')
       .map((c) => c.content)
       .join(''),
     [chunks, currentStage],
   );
-  const parsedJson = useMemo(() => tryParseJson(fullText), [fullText]);
-  const jsonBlocks = useMemo(() => extractJsonBlocks(fullText), [fullText]);
-  const concatenatedJsons = useMemo(() => extractConcatenatedJsons(fullText), [fullText]);
+  // Reasoning deltas (reasoning_content) — shown live while the model thinks.
+  const thinkingText = useMemo(
+    () => chunks
+      .filter((c) => c.stage === currentStage && c.type === 'thinking')
+      .map((c) => c.content)
+      .join(''),
+    [chunks, currentStage],
+  );
+
+  // Auto-scroll the thinking area so the latest reasoning message stays visible.
+  useEffect(() => {
+    if (thinkingRef.current) {
+      thinkingRef.current.scrollTop = thinkingRef.current.scrollHeight;
+    }
+  }, [thinkingText]);
+  const parsedJson = useMemo(() => tryParseJson(contentText), [contentText]);
+  const jsonBlocks = useMemo(() => extractJsonBlocks(contentText), [contentText]);
+  const concatenatedJsons = useMemo(() => extractConcatenatedJsons(contentText), [contentText]);
 
   // ── Early-return logic after all hooks ─────────────────────────────────
   const aiStages: StageName[] = [
@@ -271,7 +283,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
     );
   }
 
-  if (!fullText) return null;
+  if (!contentText && !thinkingText) return null;
 
   // Determine render mode: try single JSON → code-fence blocks → concatenated JSONs
   const hasStructuredData = parsedJson !== null || jsonBlocks.length > 0 || concatenatedJsons.length > 0;
@@ -302,16 +314,51 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
       {/* Stage description */}
       <p className="text-xs text-gray-500 mb-3">{description}</p>
 
-      {/* Content area */}
-      <div
-        ref={containerRef}
-        className="max-h-96 overflow-y-auto bg-gray-900 rounded p-3 border border-gray-700"
-      >
-        {showRaw || !hasStructuredData ? (
+      {/* Thinking (reasoning_content) — streamed live while the model thinks */}
+      {thinkingText && (
+        <details
+          className="mb-3 bg-gray-900/60 rounded border border-gray-700/70 overflow-hidden"
+          open={isRunning}
+        >
+          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-800/60">
+            {isRunning ? (
+              <span className="inline-block w-2.5 h-2.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <span className="text-amber-400">🧠</span>
+            )}
+            <span className="text-xs font-medium text-amber-300/90">思考过程</span>
+            <span className="text-[10px] text-gray-500 ml-auto">
+              {chunks.filter((c) => c.stage === currentStage && c.type === 'thinking').length} chunks
+            </span>
+          </summary>
+          <div className="px-3 pb-3">
+            <div
+              ref={thinkingRef}
+              className="max-h-60 overflow-y-auto pr-1"
+            >
+              <pre className="text-[11px] text-amber-200/60 italic font-mono whitespace-pre-wrap break-words leading-relaxed">
+                {thinkingText}
+              </pre>
+              {isRunning && (
+                <span className="inline-block w-2 h-3.5 bg-amber-400/70 animate-pulse ml-0.5 align-middle" />
+              )}
+            </div>
+          </div>
+        </details>
+      )}
+
+      {/* Content area — flows naturally inside the parent scroll container */}
+      <div className="bg-gray-900 rounded p-3 border border-gray-700">
+        {!contentText ? (
+          /* No visible output yet — still thinking or waiting */
+          <p className="text-xs text-gray-500">
+            {isRunning ? '等待 AI 输出…' : '（无输出内容）'}
+          </p>
+        ) : showRaw || !hasStructuredData ? (
           /* Raw text view */
           <>
             <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap break-words">
-              {fullText}
+              {contentText}
             </pre>
             {isRunning && (
               <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-0.5 align-middle" />
@@ -346,13 +393,13 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
                   <StructuredJsonView key={i} data={block.json} title={`解析块 #${i + 1}`} />
                 ))}
                 {/* Show remaining non-JSON text if any */}
-                {fullText.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, '').trim() && (
+                {contentText.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, '').trim() && (
                   <details className="mt-2">
                     <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">
                       查看附加文本内容…
                     </summary>
                     <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words mt-1 p-2 bg-gray-950 rounded">
-                      {fullText.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, '').trim()}
+                      {contentText.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, '').trim()}
                     </pre>
                   </details>
                 )}
@@ -376,7 +423,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
                 ))}
                 {/* Show any remaining non-JSON text after extraction */}
                 {(() => {
-                  let remaining = fullText;
+                  let remaining = contentText;
                   for (const block of concatenatedJsons) {
                     remaining = remaining.replace(block.raw, '');
                   }
@@ -388,7 +435,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
                     </summary>
                     <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words mt-1 p-2 bg-gray-950 rounded">
                       {(() => {
-                        let remaining = fullText;
+                        let remaining = contentText;
                         for (const block of concatenatedJsons) {
                           remaining = remaining.replace(block.raw, '');
                         }

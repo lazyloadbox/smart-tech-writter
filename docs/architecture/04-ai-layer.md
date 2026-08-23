@@ -1,6 +1,6 @@
 # 04 — AI 层（Providers 与 Agents）
 
-> 文件：`src/main/modules/ai-providers/*`、`src/main/modules/agents/*`
+> 文件：`src/main/modules/ai-providers/*`、`src/main/modules/agents/*`、`src/main/modules/prompts/*`
 
 ## 4.1 Provider 抽象
 
@@ -11,7 +11,12 @@ classDiagram
         +providerName: string
         +complete(messages, options?) Promise~string~
         +stream(messages, options?) AsyncIterable~string~
+        +streamDetailed(messages, options?) AsyncIterable~AIStreamChunk~
         +embed(text) Promise~number[]~
+    }
+    class AIStreamChunk {
+        +type: 'thinking' | 'content'
+        +text: string
     }
     class ProviderConfig {
         +type: 'openai'|'anthropic'|'ollama'
@@ -22,18 +27,19 @@ classDiagram
     class OpenAIProvider {
         -client: OpenAI (openai SDK)
         -defaultModel: string
-        +complete() 温度 0.7, max_tokens 透传
+        +complete() 温度 0.7, max_tokens 默认 128000
         +stream() 逐 delta.content yield
+        +streamDetailed() 同时读 reasoning_content 与 content
         +embed() text-embedding-3-small
     }
     AIProvider <|.. OpenAIProvider
     ProviderConfig ..> OpenAIProvider: 构造
 ```
 
-- `src/main/modules/ai-providers/base.provider.ts`：接口 + 配置类型；
-- `openai.provider.ts`：SDK 封装。空 apiKey 时以占位符 `'NOT_CONFIGURED'` 构造（请求时才报认证错误）；`baseURL` 支持任意 OpenAI 兼容端点（设置页提示 302.ai）；
+- `src/main/modules/ai-providers/base.provider.ts`：接口 + 配置类型 + `AIStreamChunk`；
+- `openai.provider.ts`：SDK 封装。空 apiKey 时以占位符 `'NOT_CONFIGURED'` 构造（请求时才报认证错误）；`baseURL` 支持任意 OpenAI 兼容端点（设置页提示 302.ai）；`streamDetailed` 同时读取 `delta.reasoning_content`（非标字段，cast 读取）与 `delta.content`，支持 DeepSeek 等推理模型的思考过程流式显示；`max_tokens` 默认 128000（匹配 DeepSeek V4 Flash 128K 上下文，防止推理模型把输出预算耗尽在思考上导致空 content）；
 - `index.ts`：`createProvider(config)` 工厂——`anthropic`/`ollama` 仅有注释占位，未实现；
-- 运行时热更新：`settings:reloadProvider` → `engine.updateProvider(newProvider)`。
+- 运行时热更新：`settings:reloadProvider` → `engine.updateProvider(newProvider)` + `localizationService.updateProvider(newProvider)`。
 
 ## 4.2 BaseAgent 基类
 
@@ -43,11 +49,12 @@ classDiagram
         <<abstract>>
         #provider: AIProvider
         #config: AgentConfig
-        -_streamCallback?: (chunk)=>void
+        -_streamCallback?: (chunk: AIStreamChunk)=>void
         +systemPrompt* string
         +execute(state)* Promise~Partial~DocGenState~~
         +setStreamCallback(cb)
-        #callLLM(userPrompt, model?) Promise~string~
+        #callLLM(userPrompt, opts?) Promise~string~
+        #buildSystemPrompt(def, override?) string
     }
 ```
 
@@ -55,22 +62,29 @@ classDiagram
 
 ```mermaid
 flowchart TD
-    A["callLLM(userPrompt, model?)"] --> B["messages = [{system: systemPrompt},{user: userPrompt}]"]
+    A["callLLM(userPrompt, opts?)"] --> B["messages = [{system: buildSystemPrompt(...)},{user: userPrompt}]"]
     B --> C{"_streamCallback 已设置?"}
-    C -- 是 --> D["for await chunk of provider.stream()<br/>累加 full + 回调每个 chunk"]
-    D --> E["return full"]
+    C -- 是 --> D["for await chunk of provider.streamDetailed()<br/>累加 content + 回调每个 chunk（含 thinking）"]
+    D --> G{"content 为空?"}
+    G -- 否 --> E["return full"]
+    G -- 是 --> H["provider.complete() 重试一次<br/>（推理模型可能把预算耗尽在思考）"]
+    H --> I{"重试仍空?"}
+    I -- 否 --> E2["回填流式查看器 + return"]
+    I -- 是 --> J["throw 明确错误 → 工作流 FAILED"]
     C -- 否 --> F["return provider.complete(messages)"]
 ```
 
-## 4.3 五个 Agent 详解
+## 4.3 七个 Agent 详解
 
 | Agent | 阶段 | 输入 | 输出 | 提示词要点 |
 |---|---|---|---|---|
-| `FileParserAgent` | upload_parse | 每文件 extractedText（截 4000 字符） | `parseSummary`（JSON: summary/keyPoints/keywords/technicalTerms，解析失败则以全文为 summary） | 工业自动化文档分析员；仅输出 JSON |
-| `AnalyzerAgent` | analyze | done 文件（每文件截 2000 字符）+ RAG 参考片段 | `AnalysisResult[]`（JSON 数组；失败则降级为每文件一条 summary=全文） | 资深技术写手；要求 fileId/fileName/summary/keyPoints/keywords/technicalTerms |
-| `WriterAgent` | draft | 全部文件的 analysisResults 汇总文本 | `DocumentDraft[]`（恒为 1 篇综合文档，标题「综合技术文档」） | 专家技术写手；要求把多文件分析结果合并为一份连贯文档；固定 6 段结构（Executive Summary / Overview / Specs / Features / Requirements / Implementation Notes） |
+| `FileParserAgent` | upload_parse | 每文件 extractedText（长文本走 map-reduce）+ 解析提示词 | `parseSummary`（JSON: summary/keyPoints/keywords/technicalTerms，解析失败则以全文为 summary） | 工业自动化文档分析员；仅输出 JSON |
+| `AnalyzerAgent` | analyze | done 文件（长文本走 map-reduce）+ RAG 参考片段 + ingestContext | `AnalysisResult[]`（JSON 数组；失败则降级为每文件一条 summary=全文） | 资深技术写手；要求 fileId/fileName/summary/keyPoints/keywords/technicalTerms |
+| `WriterAgent` | draft | 全部文件的 analysisResults 汇总文本 + 文档大纲 | `DocumentDraft[]`（恒为 1 篇综合文档，标题「综合技术文档」） | 专家技术写手；要求把多文件分析结果合并为一份连贯文档；章节结构由 `documentOutline` 参数化（默认 6 段） |
 | `ReviewerAgent` | ai_review / post_edit_review / localize_ai_review / dita_ai_review | 目标草稿集 +（post_edit 时）humanEdits 备注 | 对应评论数组字段（见下） | 4 套模式化 system prompt；仅输出 JSON 数组 |
-| `LocalizerAgent` | localize | 每篇 draft + 语言指令 | `localizedDrafts`（标题追加语言后缀） | 三语种术语表（见 4.5） |
+| `LocalizerAgent` | localize | 每篇 draft + 语言指令 | `localizedDrafts`（标题追加语言后缀） | 三语种术语约定（zh-CN / zh-TW / en） |
+| `DitaLocalizerAgent` | 独立本地化 localize | `.dita` XML + 目标语言 + 术语表上下文 | 翻译后的 DITA XML 字符串 | 只翻译文本、保留 XML 结构/属性/实体、codeblock/codeph/xref 原样 |
+| `DitaReviewerAgent` | 独立本地化 localize_ai_review / post_edit_review | 译文 + 原文 + 语言 + 术语表 | `ReviewComment[]`（draftId = sourcePath） | 本地化质量评审（翻译准确性/术语一致/语言流畅） |
 
 `ReviewerAgent` 的 4 种模式 → 写入字段映射：
 
@@ -81,36 +95,35 @@ flowchart TD
 | `localize_ai_review` | `state.localizedDrafts` | `localizeReviewComments` |
 | `dita_ai_review` | `state.ditaDocuments` | `ditaReviewComments` |
 
-## 4.4 JSON 输出容错链（重要实现细节）
+## 4.4 提示词统一管理（prompts 模块）
+
+> 2026-08-23 起，所有 Agent 提示词从各 Agent 内联字符串迁移到 `src/main/modules/prompts/` 集中管理。
+
+- **PROMPTS 注册表**：每个 Agent 的 system prompt 拆分为 `role` / `task` / `outputFormat` 三部分；`buildSystemPrompt(def, override)` 组合，覆盖优先级 `override.system > 逐部分覆盖 > 默认定义`；
+- **PROMPT_CATALOG**：12 个可配置提示词条目（按 group 分组：解析/分析/撰写/评审/本地化/摘要/编辑），每条标注对应 workflow step（`stage`/`stageLabel`）；
+- **覆盖持久化**：`loadPromptOverrides/savePromptOverrides/resetPromptOverrides`（settings 表 key=`prompts.overrides`，JSON）；保存时与默认值 diff，仅存有差异部分；
+- **生效链路**：engine `runInvoke`/`goBackToStage` 每次 invoke 从 DB 加载 → `NodeRuntime.promptOverrides` → `PipelineConfig.promptOverrides` → 各 Agent `promptOverride`（按 key 取）；map-reduce 的 map/reduce system prompt 每次调用动态构建；
+- **user prompt 构建函数**：`buildFileParserUserPrompt` / `buildAnalyzerUserPrompt` / `buildWriterPrompt` / `buildDitaLocalizerUserPrompt` / `buildDitaReviewUserPrompt` / `buildAiEditDraftUserPrompt` 等，支持注入解析提示词、文档大纲、术语表上下文。
+
+## 4.5 JSON 输出容错链（重要实现细节）
 
 AI 返回的 JSON 常带 markdown 围栏或杂散文本，系统做了**三层容错**：
 
-1. **后端 `extractJsonArray()`**（reviewer.agent.ts）：剥 ```json 围栏 → 取最外层 `[ ... ]` 子串 → `JSON.parse`；仍失败则整段存为单条 `type:'info'` 评论（explanation=原文）。
+1. **后端 `extractJsonArray()`**（reviewer.agent.ts）：剥 ```json 围栏 → 取最外层 `[ ... ]` 子串 → `JSON.parse`；仍失败则整段存为单条 `type:'info'` 评论（explanation=原文）。解析失败后还有一次修复重试（要求 AI 只输出修正后的 JSON 数组）。
 2. **前端 `normalizeComments()`**（ReviewCommentsView.tsx）：检测"单条 info + explanation 内含 JSON 数组"的降级形态，重新解析为结构化卡片（ReviewPanel 与 6b 左侧面板共用）。
 3. **流式查看器多形态解析**（AIStreamViewer.tsx）：单个 JSON / 围栏 JSON 块 / 花括号深度计数的**串联 JSON 流** `{...}{...}` 三种解析路径，且对未完成的尾部 JSON 优雅跳过。
 
-## 4.5 本地化术语设计（LocalizerAgent）
+## 4.6 本地化语言与术语
 
-`LANGUAGE_PROMPTS: Record<LocalizeLanguage, {label, instruction}>`：
+`LOCALIZE_LANGUAGE_PROMPTS: Record<LocalizeLanguage, {label, instruction}>`，支持 **en / zh-CN / zh-TW**（2026-08-23 移除 zh-HK）。
 
-| 术语 | zh-CN | zh-TW | zh-HK |
-|---|---|---|---|
-| 程序 | 程序 | **程式** | 程式 |
-| 文件 | 文件 | **檔案** | 檔案 |
-| 信息 | 信息 | **資訊** | 資訊 |
-| 软件/软体 | 软件 | **軟體** | 軟件/軟體（正式文档偏好軟件） |
-| 硬件 | 硬件 | **硬體** | 硬件 |
-| 服务器 | 服务器 | 伺服器 | 伺服器 |
-| 数据库 | 数据库 | 資料庫 | 資料庫 |
-| 网络 | 网络 | **網路** | **網絡** |
-| 数字/数码 | 数字 | **數位** | **數碼** |
-| 队列 | 队列 | 佇列 | 隊列/佇列 |
-| 对象 | 对象 | 物件 | 物件 |
-| 指针 | 指针 | 指標 | 指標（编程上下文） |
-| 总线 | 总线 | 匯流排 | 匯流排/總線 |
-| 固件 | 固件 | **韌體** | 韌體/固件（工业场景用固件） |
+术语约定从 `LocalizerAgent` 内联表迁移为 **SQLite 术语表**（`translation_mappings` 表，三列 en/zh_cn/zh_tw，内置约 400 条默认术语 `default-mappings.ts`）：
 
-## 4.6 AI 调用规模统计
+- `MappingService.getMappingContext(targetLang)` 提取目标语言相关列，格式化为 glossary 提示块（上限 500 条）；
+- zh-CN 取 en→zh_cn，zh-TW 取 en→zh_tw，en 取 zh_cn/zh_tw→en（反向）；
+- 独立本地化工具与文档生成本地化阶段都会注入术语表，保证术语一致。
+
+## 4.7 AI 调用规模统计
 
 | 阶段 | 调用次数 | 流式 |
 |---|---|---|
@@ -120,10 +133,14 @@ AI 返回的 JSON 常带 markdown 围栏或杂散文本，系统做了**三层�
 | ai_review / post_edit_review / localize_ai_review / dita_ai_review | 各 1 | ✅ |
 | localize | N 草稿 × 1 | ✅ |
 | aiEditDraft（按需） | 1/次 | ✅ |
+| 独立本地化 localize | N 文件 × 1 | ✅ |
+| 独立本地化 localize_ai_review / post_edit_review | N 文件 × 1 | ✅ |
 
-默认参数：model `gpt-4o`（可配置）、temperature 0.7、maxTokens 未设置。
+默认参数：model `gpt-4o`（可配置）、temperature 0.7、maxTokens 默认 128000（匹配 DeepSeek V4 Flash 128K 上下文）。
 
-## 4.7 上下文窗口管理（现状）
+> 空结果兜底（2026-08-23 修复）：DeepSeek 等推理模型可能把输出预算全部花在 `reasoning_content` 上导致 `content` 为空。`BaseAgent.callLLM` 在流式结果为空时自动用非流式 `complete()` 重试一次；仍为空则抛错使工作流 FAILED（不再静默生成空文档）。`OpenAIProvider` 对空内容记录 warn 日志（含 finish_reason 与 reasoning_content 长度，仅诊断用）。
+
+## 4.8 上下文窗口管理（现状）
 
 | 位置 | 截断策略 |
 |---|---|
@@ -132,5 +149,6 @@ AI 返回的 JSON 常带 markdown 围栏或杂散文本，系统做了**三层�
 | LocalSearchService.scoreFile | 仅作语义索引缺失时的回退（前 5000 字节关键词） |
 | ReviewerAgent | 草稿全文（无截断） |
 | LocalizerAgent | 草稿全文（无截断） |
+| DitaLocalizerAgent / DitaReviewerAgent | 单文件 DITA XML 全文（maxTokens 128000） |
 
-> `summarizeLongText`（`modules/context/map-reduce.ts`）：chunk 4000/overlap 200/上限 20 段均匀采样，先逐段摘要（map）再合并（reduce），替代 parse/analyze 阶段的硬截断（见 10 篇 R2 已修复）。
+> `summarizeLongText`（`modules/context/map-reduce.ts`）：chunk 4000/overlap 200/上限 20 段均匀采样，先逐段摘要（map）再合并（reduce），替代 parse/analyze 阶段的硬截断；支持注入用户解析提示词（`SummarizeOptions.instruction`）。

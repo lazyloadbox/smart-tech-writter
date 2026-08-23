@@ -3,6 +3,7 @@
 > 文件：`src/main/modules/workflow/index.ts`（facade）、`langgraph/{graph,graph-state,emitter,checkpointer}.ts`、`pipeline.ts`、`state-machine.ts`
 >
 > 2026-08-22 从自研顺序循环引擎迁移至 LangGraph 图编排。对外公共 API 与 IPC 契约不变。
+> 2026-08-23 补充：`PAUSED:USER` 用户暂停、`documentOutline`/`parseInstruction` 参数化、独立本地化工具（`LocalizationService`，见 06 篇）与文档生成工作流并行存在。
 
 ## 3.1 文件职责切分
 
@@ -22,7 +23,7 @@
 |---|---|---|---|---|---|
 | 0 | `upload_parse` | AI | 执行节点 | RUNNING | 读取器抽文本 → FileParserAgent 逐文件 AI 摘要 |
 | 0a | `review_upload` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_UPLOAD | 确认文件解析结果 |
-| 1 | `ingest` | 计数 | 执行节点 | RUNNING | 统计 done/error 文件（无实际转换） |
+| 1 | `ingest` | 汇总 | 执行节点 | RUNNING | 汇总就绪文件为 `ingestContext`（元数据 + AI 摘要 + 提取文本，M7） |
 | 2 | `analyze` | AI | 执行节点 | RUNNING | RAG 检索 + AnalyzerAgent 分析 |
 | 2a | `review_analyze` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_ANALYZE | 确认分析结果 + 参考资料 |
 | 3 | `draft` | AI | 执行节点 | RUNNING | WriterAgent 生成 Markdown 草稿 |
@@ -110,16 +111,16 @@ flowchart TD
 | 执行器 | 关键行为 |
 |---|---|
 | `runUploadParseStage` | ① 逐文件 `createReader(path).read()` → `extractedText/metadata`，失败置 error；② 对 `parsing` 状态文件用 `FileParserAgent` 逐文件 AI 摘要（长文本走 map-reduce 分段摘要），JSON 解析失败则以整段文本为 summary |
-| `runIngestStage` | 仅统计 done/error 文件数并输出进度，返回 `{}` |
+| `runIngestStage` | 汇总 done 文件为 `ingestContext`（元数据 + AI 摘要 + 提取文本拼接，M7）；AnalyzerAgent 优先使用，避免重复读取/摘要 |
 | `runAnalyzeStage` | ① 用 `parseSummary ?? name` 拼接查询串；② `ragService.search()` 取参考（默认最多 10 条，语义索引优先）；③ `AnalyzerAgent.execute`（每文件长文本走 map-reduce 摘要） |
-| `runDraftStage` | `WriterAgent` 合并全部文件的 analysisResults，生成 1 篇标题为「综合技术文档」的 Markdown |
+| `runDraftStage` | `WriterAgent` 合并全部文件的 analysisResults，生成 1 篇标题为「综合技术文档」的 Markdown（章节结构由 `documentOutline` 参数化） |
 | `runAiReviewStage` | `ReviewerAgent(mode:'ai_review')` → `aiReviewComments` |
 | `runPostEditReviewStage` | `ReviewerAgent(mode:'post_edit_review')`，附带 humanEdits 备注 → `postEditReviewComments` |
 | `runLocalizeStage` | `LocalizerAgent`，按 `targetLanguage` 翻译每篇草稿 → `localizedDrafts` |
 | `runLocalizeAiReviewStage` | `ReviewerAgent(mode:'localize_ai_review')` → `localizeReviewComments` |
-| `runDitaBuildStage` | 源 = `localizedDrafts`（空则 `drafts`）；`buildDitaXml` → `ditaDocuments`（content 为 XML 文本，不落盘、不置 COMPLETED） |
+| `runDitaBuildStage` | 源 = `localizedDrafts`（空则 `drafts`）；`buildDitaXml` → `ditaDocuments`（content 为 XML 文本，不落盘、不置 COMPLETED）；构建后 `validateDitaXml` 校验并输出警告 |
 | `runDitaAiReviewStage` | `ReviewerAgent(mode:'dita_ai_review')` → `ditaReviewComments` |
-| `runExportStage` | 优先 `ditaDocuments`（空则现场重建）；逐篇写 `userData/projects/<id>/<title>.dita`；返回 `{ outputDocuments, status:'COMPLETED', currentStage:'export' }` |
+| `runExportStage` | 优先 `ditaDocuments`（空则现场重建）；逐篇写 `userData/projects/<id>/<title>.dita` **并同时生成 `<title>.docx`**（`buildDocx`，M2）；返回 `{ outputDocuments, status:'COMPLETED', currentStage:'export' }` |
 
 ## 3.6 全流程交互时序（happy path）
 
@@ -180,9 +181,11 @@ sequenceDiagram
 - 单文件解析失败不会中断流水线：文件标记 `parseStatus:'error'` 继续执行，后续 AI 阶段只处理 `done` 文件；
 - 崩溃恢复：检查点落盘在 `langgraph.db`，重启后 `getState` 从 `state_json` 镜像恢复 PAUSED 状态，`resumeFromHumanInput` 从检查点继续。
 
-## 3.9 集成测试
+## 3.9 集成测试（历史）
 
-`test/langgraph/integration-test.ts`（Vite SSR 打包 + Electron 运行）用 mock AI provider 驱动真实 facade 验证：20 阶段 happy path、9 个暂停点逐个继续、skipLocalization 分支、humanEdits 存储、go-back 重放与字段重置、崩溃恢复（新引擎实例读同一检查点）、并发双项目、deleteProject 清理。
+> ⚠ 2026-08-23 起 `test/langgraph/` 已从仓库移除（未纳入正式测试套件）。以下为历史记录，供重建测试时参考。
+
+`test/langgraph/integration-test.ts`（Vite SSR 打包 + Electron 运行）曾用 mock AI provider 驱动真实 facade 验证：20 阶段 happy path、9 个暂停点逐个继续、skipLocalization 分支、humanEdits 存储、go-back 重放与字段重置、崩溃恢复（新引擎实例读同一检查点）、并发双项目、deleteProject 清理、思考流式（thinking+content）、空流式兜底。
 
 ```bash
 npx vite build --config test/langgraph/vite.test.config.ts

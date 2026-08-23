@@ -1,6 +1,6 @@
 # 08 — 数据模型与状态流转
 
-> 文件：`src/shared/types/document.types.ts`、`workflow.types.ts`、`ipc.types.ts`
+> 文件：`src/shared/types/document.types.ts`、`workflow.types.ts`、`ipc.types.ts`、`localization.types.ts`、`mapping.types.ts`、`prompts.types.ts`
 
 ## 8.1 共享类型全景
 
@@ -17,6 +17,7 @@ classDiagram
         +extractedText?: string
         +metadata?: FileMetadata
         +parseSummary?: string
+        +parseInstruction?: string
     }
     class AnalysisResult {
         +fileId: string
@@ -59,6 +60,10 @@ classDiagram
         +size: number
         +createdAt: string
     }
+    class DocumentOutline {
+        +sections: string[]
+        +mergeIntoSingle: boolean
+    }
     class Project {
         +id: string
         +name: string
@@ -75,6 +80,39 @@ classDiagram
         +message: string
         +detail?: string
     }
+    class LocalizationFileResult {
+        +sourcePath: string
+        +fileName: string
+        +exportFileName: string
+        +targetLanguage: LocalizeLanguage
+        +originalContent: string
+        +aiContent: string
+        +humanLocalizeContent?: string
+        +content: string
+        +status: done|failed
+        +validated: boolean
+        +repaired?: boolean
+        +validationErrors?: string[]
+        +reviewComments: ReviewComment[]
+        +postEditComments: ReviewComment[]
+    }
+    class LocalizeRun {
+        +id: string
+        +status: LocalizationStatus
+        +stage: LocalizationStage
+        +targetLanguage: LocalizeLanguage
+        +createdAt: string
+        +updatedAt: string
+        +fileCount: number
+    }
+    class TranslationMapping {
+        +id: string
+        +en: string
+        +zhCN: string
+        +zhTW: string
+        +createdAt: string
+        +updatedAt: string
+    }
 ```
 
 ## 8.2 DocGenState —— 系统核心状态
@@ -89,19 +127,23 @@ classDiagram
         +drafts: DocumentDraft[]
         +aiReviewComments: ReviewComment[]
         +humanEdits: string
+        +humanEditedDrafts: DocumentDraft[]
         +postEditReviewComments: ReviewComment[]
         +localizedDrafts: DocumentDraft[]
         +localizeReviewComments: ReviewComment[]
         +ditaDocuments: DocumentDraft[]
         +ditaReviewComments: ReviewComment[]
         +outputDocuments: OutputDocument[]
+        +ingestContext: string
         +targetLanguage: LocalizeLanguage
+        +documentOutline: DocumentOutline
+        +parseInstruction?: string
         +skipLocalization: boolean
         +workflowLogs: WorkflowLogEntry[]
         +currentStage: StageName
         +status: WorkflowStatus
         +error?: string
-        +pipelineRunId: number
+        +pipelineRunId: number  // 遗留字段，恒为 0（陈旧防护已由检查点时间旅行替代）
     }
 ```
 
@@ -111,33 +153,24 @@ classDiagram
 |---|---|---|
 | `inputFiles` | startWorkflow 初始化；upload_parse 填充 | ingest/analyze/UI |
 | `analysisResults` / `referenceSearchResults` | analyze | draft/UI |
+| `ingestContext` | ingest（元数据 + AI 摘要 + 提取文本汇总） | analyze |
 | `drafts` | draft | ai_review/human_review/localize/dita_build/UI |
 | `aiReviewComments` | ai_review | human_review/UI |
-| `humanEdits` | human_review 提交 | post_edit_review/human_confirm/downstream effective drafts |
+| `humanEdits` | human_review 提交（兼容旧版单字符串） | post_edit_review/human_confirm/downstream effective drafts |
+| `humanEditedDrafts` | human_review 提交（按草稿粒度） | 下游 effective drafts（优先于 humanEdits） |
 | `postEditReviewComments` | post_edit_review | human_confirm/UI |
 | `targetLanguage` / `skipLocalization` | human_confirm 提交 | localize/引擎跳转逻辑 |
+| `documentOutline` | startWorkflow（可选） | draft（WriterAgent 章节结构） |
+| `parseInstruction` | startWorkflow（可选） | upload_parse（FileParserAgent + map-reduce） |
 | `localizedDrafts` | localize | review_localize/localize_ai_review/human_localize_review/dita_build |
 | `localizeReviewComments` | localize_ai_review | human_localize_review/UI |
 | `ditaDocuments` | dita_build | review_dita/dita_ai_review/human_dita_review/export |
 | `ditaReviewComments` | dita_ai_review | human_dita_review/UI |
 | `outputDocuments` | export | OutputPanel/文件导出 IPC |
-| `pipelineRunId` | startWorkflow(=1)、goBack(+1) | isActiveRun 陈旧防护 |
 
-### 回退重置矩阵（`getFieldsToResetAfterStage`）
+### 回退机制（检查点时间旅行）
 
-| 回退到 | 被重置字段 |
-|---|---|
-| `upload_parse` | inputFiles(重置为 pending 清文本)、analysisResults、referenceSearchResults、drafts、aiReviewComments、postEditReviewComments、localizedDrafts、localizeReviewComments、ditaDocuments、ditaReviewComments、outputDocuments |
-| `analyze` | analysisResults、referenceSearchResults、drafts、aiReviewComments、postEditReviewComments、localizedDrafts、localizeReviewComments、ditaDocuments、ditaReviewComments、outputDocuments |
-| `draft` | drafts 及其后全部 |
-| `ai_review` | aiReviewComments 及其后全部 |
-| `human_review` | postEditReviewComments、localizedDrafts、localizeReviewComments、ditaDocuments、ditaReviewComments、outputDocuments（且 humanEdits 清空） |
-| `post_edit_review` | postEditReviewComments 及其后 |
-| `localize` | localizedDrafts、localizeReviewComments、ditaDocuments、ditaReviewComments、outputDocuments |
-| `localize_ai_review` | localizeReviewComments、ditaDocuments、ditaReviewComments、outputDocuments |
-| `dita_build` | ditaDocuments、ditaReviewComments、outputDocuments |
-| `dita_ai_review` | ditaReviewComments、outputDocuments |
-| `export` | outputDocuments |
+> 2026-08-22 起，`getFieldsToResetAfterStage` 重置矩阵已被 **LangGraph 检查点时间旅行**替代：`goBackToStage` 从 `getStateHistory` 找到 `next` 含目标阶段的检查点并重放，目标之后阶段产生的字段自动回到该点状态。`pipelineRunId` 陈旧防护已移除（字段保留但恒为 0）。
 
 ## 8.3 上传文件的生命周期
 
@@ -153,17 +186,18 @@ stateDiagram-v2
 
 ## 8.4 持久化与恢复
 
-- 每个阶段边界（进入/完成/暂停/失败）→ `state_json` 全量快照；
-- 应用重启后 `getState` 内存未命中 → `loadState` 从 DB 恢复并回填新字段；
-- 渲染进程状态是主进程状态的投影：progress 事件驱动轻量更新，阶段切换时拉全量。
+- 每个阶段边界（进入/完成/暂停/失败）→ `projects.state_json` 全量镜像 + `langgraph.db` 检查点；
+- 应用重启后 `getState` 内存未命中 → `loadMirror` 从 DB 恢复并回填新字段（`skipLocalization=true`、`humanEditedDrafts=[]`、`ingestContext=''`、`documentOutline`）；
+- 渲染进程状态是主进程状态的投影：progress 事件驱动轻量更新，阶段切换时拉全量；
+- 独立本地化运行持久化在 `localization_runs` 表（`LocalizeRunState` 含 results），总览页可 `loadRun` 恢复。
 
 ## 8.5 IPC 载荷类型速查
 
 | 类型 | 关键字段 |
 |---|---|
-| `WorkflowStartPayload` | projectId, filePaths |
+| `WorkflowStartPayload` | projectId, filePaths, documentOutline?, parseInstruction?, fileInstructions? |
 | `WorkflowProgressEvent` | projectId, stage, status, message?, data?, logEntries? |
-| `WorkflowStreamEvent` | projectId, stage, chunk |
+| `WorkflowStreamEvent` | projectId, stage, chunk{type:'thinking'\|'content', text} |
 | `WorkflowGoBackPayload` | projectId, targetStage |
 | `HumanReviewSubmitPayload` | projectId, editedDrafts, acceptedCommentIds |
 | `HumanConfirmSubmitPayload` | projectId, approved, targetLanguage?, skipLocalization?, editedDrafts?, acceptedCommentIds? |
@@ -171,3 +205,12 @@ stateDiagram-v2
 | `HumanDitaSubmitPayload` | projectId, editedDitaDocuments, acceptedCommentIds |
 | `ReviewContinuePayload` | projectId, stage, editedDrafts? |
 | `AiEditDraftPayload` | projectId, currentContent, instruction |
+| `LocalizeStartPayload` | filePaths, targetLanguage |
+| `LocalizeContinuePayload` | stage, editedDrafts? |
+| `LocalizeHumanLocalizeSubmitPayload` / `LocalizeHumanConfirmSubmitPayload` | editedDrafts, acceptedCommentIds |
+| `LocalizeGoBackPayload` | stage |
+| `MappingListPayload` | search? |
+| `MappingAddPayload` / `MappingUpdatePayload` | en, zhCN, zhTW（update 含 id） |
+| `MappingImportPayload` | rows: MappingImportRow[] |
+| `PromptsGetResult` | catalog, overrides |
+| `PromptsSetPayload` | overrides |

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import log from 'electron-log';
 import { IPC_CHANNELS } from '../../../../shared/types/ipc.types';
 import type { StageName, WorkflowLogEntry, WorkflowStatus } from '../../../../shared/types/workflow.types';
+import type { AIStreamChunk } from '../../ai-providers/base.provider';
 
 /**
  * Emits progress/stream events to the renderer and accumulates workflow logs.
@@ -10,7 +11,7 @@ import type { StageName, WorkflowLogEntry, WorkflowStatus } from '../../../../sh
  */
 export interface WorkflowEmitter {
   emitProgress(stage: StageName, message: string, data?: unknown): void;
-  emitStream(stage: StageName, chunk: string): void;
+  emitStream(stage: StageName, chunk: AIStreamChunk): void;
   setStatus(status: WorkflowStatus): void;
   /** Disable further emissions (used when an invoke is aborted by go-back). */
   setActive(active: boolean): void;
@@ -74,7 +75,7 @@ export class WorkflowEmitterImpl implements WorkflowEmitter {
     });
   }
 
-  emitStream(stage: StageName, chunk: string): void {
+  emitStream(stage: StageName, chunk: AIStreamChunk): void {
     if (!this.active) return;
     this.broadcast(IPC_CHANNELS.WORKFLOW_STREAM, {
       projectId: this.projectId,

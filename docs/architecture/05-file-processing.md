@@ -100,20 +100,25 @@ flowchart LR
 | 空行 | 折叠跳过 |
 
 - `escapeXml`：`& < > " '` 五字符转义；
+- `inlineMarkdownToDita`：段落/列表文本内的行内 Markdown 转 DITA（`**bold**`→`<b>`、`*italic*`→`<i>`、`` `code` ``→`<codeph>`、`[t](url)`→`<xref>`、`~~s~~`→`<u>`），避免 `**` 字面泄漏进 XML；codeblock 内容保持原样；
 - `slugify`：小写 + 非 `[a-z0-9\u4e00-\u9fff]` 转连字符（保留中文），生成 `concept id`；
+- `validateDitaXml(xml)`：XML well-formedness 检查（声明/单根/标签栈配对/未转义 `&` 与 `<`，CDATA/注释/自闭合/DOCTYPE 跳过）；
+- `repairDitaXml(xml)`：自动修复未转义 `&`→`&amp;`、游离 `<`→`&lt;`、未闭合标签逆序补全（`validateAndRepairDitaXml` 先校验，失败才修复再校验）；
 - 导出 `buildDitaXml(draft): string`（**流水线使用**）与 `buildDita(draft): Promise<Buffer>`（**历史遗留，无调用方**）。
 
-### docx.builder.ts（休眠代码）
+### docx.builder.ts（流水线在用，M2 已接入）
 
-基于 `docx` 库：`Document` + `Paragraph/HeadingLevel/TextRun/Packer`。支持标题/项目符号/编号/空行/正文的行级正则映射。`buildDocx()` 已实现，但**流水线没有任何阶段调用它**（export 只写 `.dita`）。类型上 `OutputDocument.format` 仍允许 `'docx' | 'pdf'`。
+基于 `docx` 库：`Document` + `Paragraph/HeadingLevel/TextRun/Packer`。支持标题/项目符号/编号/空行/正文的行级正则映射。`buildDocx(draft)` 已接入 `runExportStage`——每篇文档导出时同时生成 `.docx` 版本（`OutputDocument.format: 'docx'`）。`format: 'pdf'` 仍无构建器，保留待后续。
 
 ## 5.4 导出落盘（runExportStage + file-storage）
 
 ```
 userData/projects/<projectId>/<安全文件名>.dita
+userData/projects/<projectId>/<安全文件名>.docx
 ```
 
 - 文件名清洗：`title.replace(/[/\\?%*:|"<>]/g, '-')`；
+- DITA 写入前经 `validateDitaXml` 校验（XML 声明/单根/标签配对/未转义字符检查），校验失败输出警告；
 - 写入经 `writeProjectBinaryFile(projectId, fileName, buffer)`；
-- 结果注册为 `OutputDocument{id,title,fileName,filePath,format:'dita',size,createdAt}`；
-- 用户级导出：`file:saveDita`（另存对话框 + copyFileSync）、`file:exportAll`（选目录 + 批量 copyFileSync）、`file:downloadZip`（archiver zip 打包全部）。
+- 结果注册为 `OutputDocument{id,title,fileName,filePath,format:'dita'|'docx',size,createdAt}`；
+- 用户级导出：`file:saveDita`（另存对话框，按 format 选过滤器 + copyFileSync）、`file:exportAll`（选目录 + 批量 copyFileSync）、`file:downloadZip`（archiver zip 打包全部）。

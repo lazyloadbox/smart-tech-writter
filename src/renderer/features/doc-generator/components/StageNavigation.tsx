@@ -1,13 +1,8 @@
 import React from 'react';
 import type { StageName, WorkflowStatus } from '../../../../shared/types/workflow.types';
+import { StepNavigation, type StepNavItem } from '../../../components/StepNavigation';
 
-interface StageNavItem {
-  id: StageName;
-  label: string;
-  isPause?: boolean;
-}
-
-const STAGES: StageNavItem[] = [
+const STAGES: StepNavItem[] = [
   { id: 'upload_parse', label: '0. 上传 & 解析' },
   { id: 'review_upload', label: '0a. 确认解析', isPause: true },
   { id: 'ingest', label: '1. 数据汇总' },
@@ -30,8 +25,6 @@ const STAGES: StageNavItem[] = [
   { id: 'export', label: '9. 导出' },
 ];
 
-const STAGE_ORDER = STAGES.map((s) => s.id);
-
 interface StageNavigationProps {
   currentStage: StageName;
   status: WorkflowStatus;
@@ -39,65 +32,29 @@ interface StageNavigationProps {
   onGoBack?: (targetStage: StageName) => void;
 }
 
+/**
+ * Doc-generator stage navigation — thin wrapper over the shared
+ * `StepNavigation` sidebar (kept for a stable public API).
+ */
 export const StageNavigation: React.FC<StageNavigationProps> = ({
   currentStage,
   status,
   onNewProject,
   onGoBack,
-}) => {
-  const currentIdx = STAGE_ORDER.indexOf(currentStage);
-
-  return (
-    <div className="w-52 shrink-0 bg-gray-800 border-r border-gray-700 flex flex-col overflow-y-auto">
-      <div className="p-3 border-b border-gray-700">
-        <span className="text-xs text-gray-400 uppercase font-semibold tracking-wider">工作流步骤</span>
-      </div>
-      <nav className="flex-1 p-2 space-y-0.5">
-        {STAGES.map((stage, idx) => {
-          const isActive = stage.id === currentStage;
-          const isDone = idx < currentIdx;
-          const isPaused = isActive && status.startsWith('PAUSED');
-          const canGoBack = isDone && onGoBack && status !== 'IDLE';
-
-          return (
-            <div
-              key={stage.id}
-              onClick={() => canGoBack && onGoBack?.(stage.id)}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
-                isActive
-                  ? isPaused
-                    ? 'bg-yellow-900/50 text-yellow-300 font-medium'
-                    : 'bg-blue-900/50 text-blue-300 font-medium'
-                  : isDone
-                  ? canGoBack
-                    ? 'text-green-400 cursor-pointer hover:bg-green-900/30 transition-colors'
-                    : 'text-green-400'
-                  : 'text-gray-500'
-              }`}
-              title={canGoBack ? `点击返回: ${stage.label}` : stage.label}
-            >
-              <span className="shrink-0 text-xs">
-                {isDone ? '✓' : isActive ? (isPaused ? '⏸' : '▶') : '○'}
-              </span>
-              <span className="truncate">{stage.label}</span>
-              {stage.isPause && !isDone && !isActive && (
-                <span className="ml-auto text-yellow-600 text-xs">⏸</span>
-              )}
-              {canGoBack && (
-                <span className="ml-auto text-green-500 text-[10px] opacity-60">↩</span>
-              )}
-            </div>
-          );
-        })}
-      </nav>
-      <div className="p-3 border-t border-gray-700">
-        <button
-          onClick={onNewProject}
-          className="w-full py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
-        >
-          + 新建项目
-        </button>
-      </div>
-    </div>
-  );
-};
+}) => (
+  <StepNavigation
+    title="工作流步骤"
+    steps={STAGES}
+    currentStep={currentStage}
+    status={status}
+    onGoBack={onGoBack ? (target) => onGoBack(target as StageName) : undefined}
+    footer={
+      <button
+        onClick={onNewProject}
+        className="w-full py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+      >
+        + 新建项目
+      </button>
+    }
+  />
+);

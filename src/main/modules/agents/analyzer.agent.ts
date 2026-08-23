@@ -1,21 +1,12 @@
 import { BaseAgent } from './base.agent';
 import { summarizeLongText } from '../context';
+import { PROMPTS, buildAnalyzerUserPrompt } from '../prompts';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { AnalysisResult } from '../../../shared/types/document.types';
 
 export class AnalyzerAgent extends BaseAgent {
   get systemPrompt(): string {
-    return this.config.systemPromptTemplate ?? `You are a senior technical writer for industrial automation documentation.
-Analyze the provided documents and reference materials, then produce a JSON array of analysis results.
-Each result must have:
-- fileId: the file's id
-- fileName: the file's name  
-- summary: concise content summary
-- keyPoints: key technical points (max 10)
-- keywords: relevant keywords (max 15)
-- technicalTerms: domain-specific terms found
-
-Respond ONLY with valid JSON array, no markdown fences.`;
+    return this.buildSystemPrompt(PROMPTS.analyzer);
   }
 
   async execute(state: DocGenState): Promise<Partial<DocGenState>> {
@@ -31,6 +22,7 @@ Respond ONLY with valid JSON array, no markdown fences.`;
         provider: this.provider,
         signal: this.config.signal,
         onProgress: (msg) => this.config.onProgress?.(msg),
+        promptOverrides: this.config.promptOverrides,
       });
     } else {
       const filesContext: string[] = [];
@@ -39,6 +31,7 @@ Respond ONLY with valid JSON array, no markdown fences.`;
           provider: this.provider,
           signal: this.config.signal,
           onProgress: (msg) => this.config.onProgress?.(msg),
+          promptOverrides: this.config.promptOverrides,
         });
         filesContext.push(`File: ${f.name}\nSummary: ${f.parseSummary ?? 'N/A'}\nText: ${text}`);
       }
@@ -53,7 +46,7 @@ Respond ONLY with valid JSON array, no markdown fences.`;
             .join('\n')
         : '';
 
-    const prompt = `Analyze the following input documents:\n\n${filesContextStr}${refContext}\n\nProduce detailed analysis results for each input file.`;
+    const prompt = buildAnalyzerUserPrompt(filesContextStr, refContext);
     const response = await this.callLLM(prompt);
     let analysisResults: AnalysisResult[];
     try {

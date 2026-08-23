@@ -8,6 +8,7 @@ import type {
   ReviewComment,
   OutputDocument,
   LocalizeLanguage,
+  DocumentOutline,
 } from '../../../../shared/types/document.types';
 
 /**
@@ -35,6 +36,8 @@ export const WorkflowStateAnnotation = Annotation.Root({
   outputDocuments: Annotation<OutputDocument[]>,
   ingestContext: Annotation<string>,
   targetLanguage: Annotation<LocalizeLanguage>,
+  documentOutline: Annotation<DocumentOutline>,
+  parseInstruction: Annotation<string>,
   skipLocalization: Annotation<boolean>,
   currentStage: Annotation<StageName>,
   status: Annotation<WorkflowStatus>,

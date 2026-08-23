@@ -1,8 +1,8 @@
 {
   "name": "smart-tech-writter",
   "productName": "smart-tech-writter",
-  "version": "1.0.0",
-  "description": "My Electron application description",
+  "version": "0.1.0",
+  "description": "AI-powered desktop application for technical writing, built with Electron, React, and LangGraph.",
   "main": ".vite/build/index.js",
   "private": true,
   "scripts": {
@@ -10,11 +10,34 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "dist:portable": "electron-builder --win portable",
+    "version:bump": "node scripts/bump-version.mjs",
     "lint": "eslint --ext .ts,.tsx ."
+  },
+  "build": {
+    "appId": "com.smarttechwriter.app",
+    "productName": "Smart Tech Writer",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      ".vite/**",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "npmRebuild": true,
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
   },
   "keywords": [],
   "author": {
-    "name": "lazyloadbox",
+    "name": "Tim Wang",
     "email": "lazyloadbox@gmail.com"
   },
   "license": "MIT",
@@ -42,6 +65,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.0",
     "electron": "42.4.1",
+    "electron-builder": "^26.15.3",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.32.0",
     "postcss": "^8.5.15",
@@ -53,13 +77,12 @@
     "@langchain/core": "^1.2.0",
     "@langchain/langgraph": "^1.4.4",
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.4",
-    "@langchain/openai": "^1.5.1",
-    "@tanstack/react-query": "^5.101.0",
     "archiver": "^8.0.0",
     "better-sqlite3": "^12.11.1",
     "docx": "^9.7.1",
     "electron-log": "^5.4.4",
     "electron-squirrel-startup": "^1.0.1",
+    "exceljs": "^4.4.0",
     "mailparser": "^3.9.11",
     "mammoth": "^1.12.0",
     "openai": "^6.44.0",

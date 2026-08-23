@@ -6,6 +6,8 @@ import { getDatabase, getSetting, closeDatabase } from './modules/storage/databa
 import { createProvider } from './modules/ai-providers/index';
 import { SemanticSearchService } from './modules/rag/semantic-search.service';
 import { WorkflowEngine } from './modules/workflow/index';
+import { LocalizationService } from './modules/localization/localization.service';
+import { MappingService } from './modules/localization/mapping.service';
 import { registerAllIpcHandlers } from './ipc/index';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -21,6 +23,8 @@ if (remoteDebugPort) {
 
 let mainWindow: BrowserWindow | null = null;
 let workflowEngine: WorkflowEngine | null = null;
+let mappingService: MappingService | null = null;
+let localizationService: LocalizationService | null = null;
 
 function createWindow(): void {
   // Forge Vite outputs preload bundle next to main bundle as "preload.js".
@@ -73,8 +77,12 @@ function initializeServices(): void {
   // Build workflow engine (window-agnostic — events broadcast to all windows)
   workflowEngine = new WorkflowEngine(provider, ragService);
 
+  // Build standalone DITA localization service (shares the same provider)
+  mappingService = new MappingService();
+  localizationService = new LocalizationService(provider, mappingService);
+
   // Register all IPC handlers
-  registerAllIpcHandlers(workflowEngine, ragService);
+  registerAllIpcHandlers(workflowEngine, ragService, localizationService, mappingService);
 
   log.info('Smart Tech Writer services initialized');
 }

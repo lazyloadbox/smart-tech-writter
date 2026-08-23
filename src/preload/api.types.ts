@@ -11,11 +11,34 @@ import type {
   WorkflowStreamEvent,
   SettingsGetPayload,
   SettingsSetPayload,
+  AppPaths,
+  LocalizeStartPayload,
+  LocalizeProgressEvent,
+  LocalizeStreamEvent,
+  LocalizeStatusResult,
+  LocalizeContinuePayload,
+  LocalizeHumanLocalizeSubmitPayload,
+  LocalizeHumanConfirmSubmitPayload,
+  LocalizeGoBackPayload,
 } from '../shared/types/ipc.types';
 import type { DocGenState } from '../shared/types/workflow.types';
 import type { Project } from '../shared/types/workflow.types';
 import type { StageName } from '../shared/types/workflow.types';
 import type { SearchResult } from '../shared/types/document.types';
+import type { LocalizeRun, LocalizeRunState } from '../shared/types/localization.types';
+import type {
+  TranslationMapping,
+  MappingImportResult,
+  MappingStats,
+  MappingImportParseResult,
+} from '../shared/types/mapping.types';
+import type {
+  MappingListPayload,
+  MappingAddPayload,
+  MappingUpdatePayload,
+  MappingDeletePayload,
+  MappingImportPayload,
+} from '../shared/types/ipc.types';
 // Types for what the preload exposes on window.electronAPI
 export interface ElectronAPI {
   workflow: {
@@ -57,10 +80,46 @@ export interface ElectronAPI {
     set(payload: SettingsSetPayload): Promise<void>;
     reloadProvider(): Promise<void>;
   };
+  app: {
+    getVersion(): Promise<string>;
+    getPaths(): Promise<AppPaths>;
+    openPath(targetPath: string): Promise<void>;
+  };
+  prompts: {
+    get(): Promise<import('../shared/types/ipc.types').PromptsGetResult>;
+    set(overrides: import('../shared/types/prompts.types').PromptOverrides): Promise<void>;
+    reset(): Promise<void>;
+  };
   projects: {
     list(): Promise<Project[]>;
     get(projectId: string): Promise<Project | null>;
+    getState(projectId: string): Promise<DocGenState | null>;
     delete(projectId: string): Promise<void>;
+  };
+  localization: {
+    selectFiles(): Promise<string[]>;
+    start(payload: LocalizeStartPayload): Promise<void>;
+    getStatus(): Promise<LocalizeStatusResult>;
+    exportTo(): Promise<{ destDir: string; count: number } | null>;
+    continue(payload: LocalizeContinuePayload): Promise<void>;
+    submitHumanLocalizeReview(payload: LocalizeHumanLocalizeSubmitPayload): Promise<void>;
+    submitHumanConfirm(payload: LocalizeHumanConfirmSubmitPayload): Promise<void>;
+    goBack(payload: LocalizeGoBackPayload): Promise<void>;
+    listRuns(): Promise<LocalizeRun[]>;
+    getRun(runId: string): Promise<LocalizeRunState | null>;
+    deleteRun(runId: string): Promise<void>;
+    loadRun(runId: string): Promise<LocalizeRunState | null>;
+    onProgress(callback: (event: LocalizeProgressEvent) => void): () => void;
+    onStream(callback: (event: LocalizeStreamEvent) => void): () => void;
+  };
+  mapping: {
+    list(payload: MappingListPayload): Promise<TranslationMapping[]>;
+    add(payload: MappingAddPayload): Promise<TranslationMapping | null>;
+    update(payload: MappingUpdatePayload): Promise<TranslationMapping | null>;
+    delete(payload: MappingDeletePayload): Promise<void>;
+    importParse(): Promise<MappingImportParseResult | null>;
+    import(payload: MappingImportPayload): Promise<MappingImportResult>;
+    stats(): Promise<MappingStats>;
   };
 }
 

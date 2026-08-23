@@ -1,10 +1,9 @@
 import React from 'react';
-
-type Tab = 'doc-generator' | 'settings';
+import { TABS, type TabId } from '../../navigation';
 
 interface AppLayoutProps {
-  activeTab: Tab;
-  onTabChange: (tab: Tab) => void;
+  activeTab: TabId;
+  onTabChange: (tab: TabId) => void;
   children: React.ReactNode;
 }
 
@@ -13,13 +12,11 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ activeTab, onTabChange, ch
     <div className="flex flex-col h-screen overflow-hidden bg-gray-900">
       {/* Top Tab Bar */}
       <div className="flex items-center bg-gray-800 border-b border-gray-700 px-4 h-10 shrink-0">
-        <span className="text-blue-400 font-semibold text-sm mr-6">Smart Tech Writer</span>
-        <TabButton active={activeTab === 'doc-generator'} onClick={() => onTabChange('doc-generator')}>
-          Doc Generator
-        </TabButton>
-        <TabButton active={activeTab === 'settings'} onClick={() => onTabChange('settings')}>
-          Settings
-        </TabButton>
+        {TABS.map((tab) => (
+          <TabButton key={tab.id} active={activeTab === tab.id} onClick={() => onTabChange(tab.id)}>
+            {tab.label}
+          </TabButton>
+        ))}
       </div>
 
       {/* Content */}

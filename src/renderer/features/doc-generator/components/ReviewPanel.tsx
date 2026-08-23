@@ -1,6 +1,9 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import type { DocumentDraft, ReviewComment } from '../../../../shared/types/document.types';
 import { normalizeComments, typeIcon, typeLabel, typeColor } from './ReviewCommentsView';
+import { HighlightedTextarea } from './xml/HighlightedTextarea';
+import { XmlHighlight } from './xml/XmlHighlight';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface ReviewPanelProps {
   drafts: DocumentDraft[];
@@ -15,6 +18,20 @@ interface ReviewPanelProps {
   submitLabel?: string;
   /** Optional content rendered on the left side of the footer (e.g. language selector). */
   footerLeft?: React.ReactNode;
+  /**
+   * Editor flavor: `markdown` (default, plain textarea) or `xml` (textarea
+   * with live XML syntax highlighting, used for DITA review).
+   */
+  editorMode?: 'markdown' | 'xml';
+  /**
+   * Left panel content:
+   * - `comments` (default): AI review comments with accept/reject.
+   * - `original`: the original source drafts (read-only), synced to the
+   *   active doc tab — used for side-by-side review before AI comments exist.
+   */
+  leftPanel?: 'comments' | 'original';
+  /** Original source drafts shown when `leftPanel === 'original'` (falls back to `drafts`). */
+  originalDrafts?: DocumentDraft[];
 }
 
 /**
@@ -38,7 +55,8 @@ interface ReviewPanelProps {
  *   incidental whitespace, causing silent match failures.
  */
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
-  drafts, comments, onSubmit, title = '人工 Review', submitLabel = '提交，进入下一步 ▶', footerLeft,
+  drafts, comments, onSubmit, title = '人工 Review', submitLabel = '提交，进入下一步 ▶', footerLeft, editorMode = 'markdown',
+  leftPanel = 'comments', originalDrafts,
 }) => {
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
   const [activeDoc, setActiveDoc] = useState(0);
@@ -264,16 +282,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <h2 className="text-sm font-semibold text-gray-200">{title}</h2>
       </div>
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: AI Comments */}
-        <div className="w-80 shrink-0 border-r border-gray-700 flex flex-col overflow-hidden">
+        {/* Left: AI Comments (or Original source when leftPanel === 'original') */}
+        <div className={`${leftPanel === 'original' ? 'flex-1 min-w-0' : 'w-80 shrink-0'} border-r border-gray-700 flex flex-col overflow-hidden`}>
           <div className="px-3 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-400">
-              AI 审查建议 ({normalizedComments.length} 条)
-              {accepted.size > 0 && (
+              {leftPanel === 'original' ? '📄 原文（只读）' : `AI 审查建议 (${normalizedComments.length} 条)`}
+              {leftPanel !== 'original' && accepted.size > 0 && (
                 <span className="ml-1 text-green-400"> · 已接受 {accepted.size} 条</span>
               )}
             </span>
-            {normalizedComments.filter((c) => c.suggestedText).length > 0 && (
+            {leftPanel !== 'original' && normalizedComments.filter((c) => c.suggestedText).length > 0 && (
               <button onClick={acceptAll} className="text-xs text-blue-400 hover:text-blue-300">
                 接受全部建议
               </button>
@@ -290,83 +308,101 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               ))}
             </div>
           )}
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {normalizedComments.length === 0 && (
-              <p className="text-xs text-gray-500 p-4 text-center">暂无 AI 审查建议</p>
-            )}
-            {normalizedComments.map((c) => {
-              const status = getCommentStatus(c);
-              const matchFailed = status === 'accepted' && failedAcceptIds.includes(c.id);
-              return (
-                <div key={c.id} className={`p-2.5 rounded border text-xs transition-colors ${
-                  matchFailed
-                    ? 'border-yellow-600 bg-yellow-900/20'
-                    : status === 'accepted'
-                      ? 'border-green-600 bg-green-900/20'
-                      : 'border-gray-600 bg-gray-800 hover:border-gray-500'
-                }`}>
-                  {/* Type badge + explanation */}
-                  <div className="flex items-start gap-1.5 mb-1.5">
-                    <span className={`shrink-0 text-xs mt-0.5 ${typeColor(c.type)}`}>{typeIcon(c.type)}</span>
-                    <div className="flex-1 min-w-0">
-                      <span className={`text-xs font-medium ${typeColor(c.type)}`}>
-                        {typeLabel(c.type)}
-                      </span>
-                      {c.section && <span className="text-gray-500 ml-1">· {c.section}</span>}
-                    </div>
-                  </div>
-                  <p className="text-gray-300 mb-1.5">{c.explanation}</p>
-                  {matchFailed && (
-                    <p className="text-[10px] text-yellow-400/90 mb-1.5 italic">
-                      ⚠ 原文未在草稿中精确匹配，无法自动替换。请手动编辑右侧草稿。
-                    </p>
+          {leftPanel === 'original' ? (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {(originalDrafts ?? drafts).length === 0 && (
+                <p className="text-xs text-gray-500 p-4 text-center">暂无原文</p>
+              )}
+              {(originalDrafts ?? drafts).map((d, i) => (
+                <div key={d.id} className={i === activeDoc ? '' : 'hidden'}>
+                  <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
+                  {editorMode === 'xml' ? (
+                    <XmlHighlight code={d.content} />
+                  ) : (
+                    <MarkdownRenderer content={d.content} />
                   )}
-
-                  {/* Original → Suggested diff */}
-                  {c.originalText && c.suggestedText && (
-                    <div className="mb-1.5 space-y-0.5">
-                      {c.originalText !== c.suggestedText && (
-                        <div className="text-red-400/70 line-through text-[11px] bg-red-900/10 px-1.5 py-0.5 rounded">
-                          {c.originalText.length > 120 ? c.originalText.slice(0, 120) + '…' : c.originalText}
-                        </div>
-                      )}
-                      <div className="text-green-400/80 text-[11px] bg-green-900/10 px-1.5 py-0.5 rounded">
-                        {c.suggestedText.length > 120 ? c.suggestedText.slice(0, 120) + '…' : c.suggestedText}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {normalizedComments.length === 0 && (
+                <p className="text-xs text-gray-500 p-4 text-center">暂无 AI 审查建议</p>
+              )}
+              {normalizedComments.map((c) => {
+                const status = getCommentStatus(c);
+                const matchFailed = status === 'accepted' && failedAcceptIds.includes(c.id);
+                return (
+                  <div key={c.id} className={`p-2.5 rounded border text-xs transition-colors ${
+                    matchFailed
+                      ? 'border-yellow-600 bg-yellow-900/20'
+                      : status === 'accepted'
+                        ? 'border-green-600 bg-green-900/20'
+                        : 'border-gray-600 bg-gray-800 hover:border-gray-500'
+                  }`}>
+                    {/* Type badge + explanation */}
+                    <div className="flex items-start gap-1.5 mb-1.5">
+                      <span className={`shrink-0 text-xs mt-0.5 ${typeColor(c.type)}`}>{typeIcon(c.type)}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-xs font-medium ${typeColor(c.type)}`}>
+                          {typeLabel(c.type)}
+                        </span>
+                        {c.section && <span className="text-gray-500 ml-1">· {c.section}</span>}
                       </div>
                     </div>
-                  )}
-
-                  {/* Action buttons */}
-                  <div className="flex gap-2 mt-1.5">
-                    {c.suggestedText ? (
-                      <>
-                        <button onClick={() => toggleAccept(c)}
-                          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                            status === 'accepted'
-                              ? 'bg-green-700 text-white hover:bg-green-800'
-                              : 'bg-green-700/50 text-green-300 hover:bg-green-700'
-                          }`}>
-                          {status === 'accepted' ? '✓ 已接受' : '接受'}
-                        </button>
-                        <button onClick={() => {
-                          if (status === 'accepted') toggleAccept(c);
-                        }}
-                          className={`px-2.5 py-1 rounded text-xs transition-colors ${
-                            status === 'accepted'
-                              ? 'bg-red-700/50 text-red-300 hover:bg-red-700'
-                              : 'bg-gray-700 text-gray-400 hover:bg-red-900/50'
-                          }`}>
-                          {status === 'accepted' ? '✗ 撤销' : '忽略'}
-                        </button>
-                      </>
-                    ) : (
-                      <span className="text-xs text-gray-500 italic">仅供查看</span>
+                    <p className="text-gray-300 mb-1.5">{c.explanation}</p>
+                    {matchFailed && (
+                      <p className="text-[10px] text-yellow-400/90 mb-1.5 italic">
+                        ⚠ 原文未在草稿中精确匹配，无法自动替换。请手动编辑右侧草稿。
+                      </p>
                     )}
+
+                    {/* Original → Suggested diff */}
+                    {c.originalText && c.suggestedText && (
+                      <div className="mb-1.5 space-y-0.5">
+                        {c.originalText !== c.suggestedText && (
+                          <div className="text-red-400/70 line-through text-[11px] bg-red-900/10 px-1.5 py-0.5 rounded">
+                            {c.originalText.length > 120 ? c.originalText.slice(0, 120) + '…' : c.originalText}
+                          </div>
+                        )}
+                        <div className="text-green-400/80 text-[11px] bg-green-900/10 px-1.5 py-0.5 rounded">
+                          {c.suggestedText.length > 120 ? c.suggestedText.slice(0, 120) + '…' : c.suggestedText}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2 mt-1.5">
+                      {c.suggestedText ? (
+                        <>
+                          <button onClick={() => toggleAccept(c)}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                              status === 'accepted'
+                                ? 'bg-green-700 text-white hover:bg-green-800'
+                                : 'bg-green-700/50 text-green-300 hover:bg-green-700'
+                            }`}>
+                            {status === 'accepted' ? '✓ 已接受' : '接受'}
+                          </button>
+                          <button onClick={() => {
+                            if (status === 'accepted') toggleAccept(c);
+                          }}
+                            className={`px-2.5 py-1 rounded text-xs transition-colors ${
+                              status === 'accepted'
+                                ? 'bg-red-700/50 text-red-300 hover:bg-red-700'
+                                : 'bg-gray-700 text-gray-400 hover:bg-red-900/50'
+                            }`}>
+                            {status === 'accepted' ? '✗ 撤销' : '忽略'}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs text-gray-500 italic">仅供查看</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Right: Editor */}
@@ -386,17 +422,28 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               )}
             </span>
           </div>
-          <textarea
-            className="flex-1 bg-gray-900 text-gray-300 text-sm p-4 resize-none outline-none font-mono"
-            value={effectiveContent}
-            onChange={(e) => handleManualEdit(e.target.value)}
-          />
+          {editorMode === 'xml' ? (
+            <HighlightedTextarea
+              value={effectiveContent}
+              onChange={handleManualEdit}
+              className="bg-gray-900"
+              placeholder="DITA XML 内容..."
+            />
+          ) : (
+            <textarea
+              className="flex-1 bg-gray-900 text-gray-300 text-sm p-4 resize-none outline-none font-mono"
+              value={effectiveContent}
+              onChange={(e) => handleManualEdit(e.target.value)}
+            />
+          )}
           <div className="px-4 py-3 border-t border-gray-700 bg-gray-800 flex items-center gap-2">
             {footerLeft ? (
               <div className="mr-auto flex items-center gap-2">{footerLeft}</div>
             ) : (
               <span className="text-xs text-gray-500 mr-auto">
-                接受建议会自动替换原文 · 也可手动编辑
+                {leftPanel === 'original'
+                  ? '可直接编辑右侧译文'
+                  : '接受建议会自动替换原文 · 也可手动编辑'}
               </span>
             )}
             <button

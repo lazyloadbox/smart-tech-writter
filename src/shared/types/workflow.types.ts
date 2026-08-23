@@ -86,6 +86,17 @@ export interface DocGenState {
   /** Target language for localization stage */
   targetLanguage: import('./document.types').LocalizeLanguage;
   /**
+   * 文档大纲：文档撰写阶段的章节结构（可自定义，不再固定模板）。
+   * 未设置时使用默认 6 章节大纲。
+   */
+  documentOutline: import('./document.types').DocumentOutline;
+  /**
+   * 全局解析提示词：上传 & 解析阶段用户输入的解析思路 / 重点 / 分析设计，
+   * 会注入到文件解析 Agent 与 map-reduce 摘要的提示词中。
+   * 单文件可通过 UploadedFile.parseInstruction 覆盖。
+   */
+  parseInstruction?: string;
+  /**
    * When true, the localization stages (localize / review_localize /
    * localize_ai_review / human_localize_review) are skipped and the pipeline
    * jumps directly from human_confirm to dita_build, building DITA from the

@@ -1,0 +1,86 @@
+name: Release
+
+# 一键发布新版本：
+#   1. 仓库页面 → Actions → Release → Run workflow
+#   2. 选择版本升级类型（patch/minor/major）或直接填写指定版本号
+#   3. 自动完成：升级 package.json 版本 → 构建安装包 + 单文件 exe → 提交版本号 → 打 tag → 创建 GitHub Release
+# 无需手动修改任何配置文件。
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: '版本升级类型（patch=修复 / minor=新功能 / major=大版本）'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version:
+        description: '指定版本号（如 1.2.0），留空则按上方类型自动升级'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 自动升级版本号（同步 package.json + package-lock.json）
+      - name: Bump version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}" -ne "") {
+            $newVersion = node scripts/bump-version.mjs "${{ github.event.inputs.version }}"
+          } else {
+            $newVersion = node scripts/bump-version.mjs "${{ github.event.inputs.bump }}"
+          }
+          Write-Output "newVersion=$newVersion" >> $env:GITHUB_OUTPUT
+          Write-Output "New version: $newVersion"
+
+      # 构建 Windows 安装包（Squirrel Setup.exe + nupkg）
+      - name: Build Windows installer
+        run: npm run make
+
+      # 构建单文件 portable exe（electron-builder，自解压运行）
+      - name: Build portable single-file exe
+        run: npm run dist:portable
+
+      # 把版本号变更提交回仓库并打 tag
+      - name: Commit version bump and create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): v${{ steps.version.outputs.newVersion }}"
+          git tag "v${{ steps.version.outputs.newVersion }}"
+          git push origin "HEAD:${{ github.ref_name }}" --tags
+
+      # 创建 GitHub Release 并附带全部构建产物
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.newVersion }}"
+          files: |
+            out/make/squirrel.windows/x64/*.exe
+            out/make/squirrel.windows/x64/*.nupkg
+            out/make/squirrel.windows/x64/RELEASES
+            dist/*.exe
+          generate_release_notes: true

@@ -30,10 +30,43 @@ export const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_RELOAD_PROVIDER: 'settings:reloadProvider',
+  // App
+  APP_GET_VERSION: 'app:getVersion',
+  APP_GET_PATHS: 'app:getPaths',
+  APP_OPEN_PATH: 'app:openPath',
+  // Prompts
+  PROMPTS_GET: 'prompts:get',
+  PROMPTS_SET: 'prompts:set',
+  PROMPTS_RESET: 'prompts:reset',
   // Projects
   PROJECTS_LIST: 'projects:list',
   PROJECTS_GET: 'projects:get',
+  PROJECTS_GET_STATE: 'projects:getState',
   PROJECTS_DELETE: 'projects:delete',
+  // Localization (standalone DITA translation feature)
+  LOCALIZE_SELECT_FILES: 'localize:selectFiles',
+  LOCALIZE_START: 'localize:start',
+  LOCALIZE_STATUS: 'localize:status',
+  LOCALIZE_EXPORT: 'localize:export',
+  LOCALIZE_PROGRESS: 'localize:progress',
+  LOCALIZE_STREAM: 'localize:stream',
+  LOCALIZE_CONTINUE: 'localize:continue',
+  LOCALIZE_HUMAN_LOCALIZE_SUBMIT: 'localize:humanLocalizeSubmit',
+  LOCALIZE_HUMAN_CONFIRM_SUBMIT: 'localize:humanConfirmSubmit',
+  LOCALIZE_GO_BACK: 'localize:goBack',
+  // Localization run history (persisted runs)
+  LOCALIZE_RUNS_LIST: 'localize:runsList',
+  LOCALIZE_RUNS_GET: 'localize:runsGet',
+  LOCALIZE_RUNS_DELETE: 'localize:runsDelete',
+  LOCALIZE_RUNS_LOAD: 'localize:runsLoad',
+  // Translation mapping (glossary) management
+  MAPPING_LIST: 'mapping:list',
+  MAPPING_ADD: 'mapping:add',
+  MAPPING_UPDATE: 'mapping:update',
+  MAPPING_DELETE: 'mapping:delete',
+  MAPPING_IMPORT_PARSE: 'mapping:importParse',
+  MAPPING_IMPORT: 'mapping:import',
+  MAPPING_STATS: 'mapping:stats',
 } as const;
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS];
@@ -41,6 +74,18 @@ export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS];
 export interface WorkflowStartPayload {
   projectId: string;
   filePaths: string[];
+  /** 可选：自定义文档大纲（章节结构），未提供时使用默认 6 章节 */
+  documentOutline?: import('./document.types').DocumentOutline;
+  /**
+   * 可选：全局解析提示词（解析思路 / 重点 / 分析设计），
+   * 注入到上传 & 解析阶段的文件解析 Agent 与 map-reduce 摘要。
+   */
+  parseInstruction?: string;
+  /**
+   * 可选：单文件解析提示词（按文件路径），用于对特定文件做特殊处理，
+   * 优先级高于全局解析提示词。
+   */
+  fileInstructions?: Record<string, string>;
 }
 
 export interface WorkflowProgressEvent {
@@ -61,7 +106,11 @@ export interface WorkflowGoBackPayload {
 export interface WorkflowStreamEvent {
   projectId: string;
   stage: string;
-  chunk: string;
+  /** Typed stream delta — `thinking` = reasoning_content, `content` = visible output. */
+  chunk: {
+    type: 'thinking' | 'content';
+    text: string;
+  };
 }
 
 export interface HumanReviewSubmitPayload {
@@ -123,4 +172,124 @@ export interface SettingsGetPayload {
 export interface SettingsSetPayload {
   key: string;
   value: string | number | boolean;
+}
+
+/** 应用目录信息（设置页「应用目录」展示用） */
+export interface AppPaths {
+  /** 应用安装/执行目录 */
+  appPath: string;
+  /** 用户数据目录（设置、数据库、项目、日志等） */
+  userData: string;
+  /** SQLite 主数据库文件（smart-tech-writer.db） */
+  databasePath: string;
+  /** LangGraph 检查点数据库文件（langgraph.db） */
+  langgraphDbPath: string;
+  /** 项目文件目录（userData/projects） */
+  projectsDir: string;
+  /** 日志目录 */
+  logsDir: string;
+}
+
+export interface AppOpenPathPayload {
+  /** 要打开的目录或文件路径 */
+  targetPath: string;
+}
+
+export interface PromptsGetResult {
+  catalog: import('./prompts.types').PromptCatalogEntry[];
+  overrides: import('./prompts.types').PromptOverrides;
+}
+
+export interface PromptsSetPayload {
+  overrides: import('./prompts.types').PromptOverrides;
+}
+
+// --- Localization (standalone DITA translation feature) ---
+
+export interface LocalizeStartPayload {
+  filePaths: string[];
+  targetLanguage: import('./document.types').LocalizeLanguage;
+}
+
+/** Continue from the review_localize pause into localize_ai_review. */
+export interface LocalizeContinuePayload {
+  stage: import('./localization.types').LocalizationStage;
+  /** Manual edits made during review_localize (id = sourcePath). */
+  editedDrafts?: import('./document.types').DocumentDraft[];
+}
+
+/** Submit human edits from the human_localize_review pause. */
+export interface LocalizeHumanLocalizeSubmitPayload {
+  editedDrafts: import('./document.types').DocumentDraft[];
+  acceptedCommentIds: string[];
+}
+
+/** Submit final human edits from the human_confirm pause. */
+export interface LocalizeHumanConfirmSubmitPayload {
+  editedDrafts: import('./document.types').DocumentDraft[];
+  acceptedCommentIds: string[];
+}
+
+/** Go back to an earlier stage (re-run its AI step). */
+export interface LocalizeGoBackPayload {
+  stage: import('./localization.types').LocalizationStage;
+}
+
+/** Per-file progress event (main → renderer). */
+export interface LocalizeProgressEvent {
+  stage: import('./localization.types').LocalizationStage;
+  fileName: string;
+  index: number;
+  total: number;
+  status: 'started' | 'done' | 'failed';
+  message?: string;
+}
+
+/** AI stream delta for a file (main → renderer). */
+export interface LocalizeStreamEvent {
+  fileName: string;
+  chunk: {
+    type: 'thinking' | 'content';
+    text: string;
+  };
+}
+
+export interface LocalizeStatusResult {
+  status: import('./localization.types').LocalizationStatus;
+  stage: import('./localization.types').LocalizationStage;
+  results: import('./localization.types').LocalizationFileResult[];
+}
+
+// --- Translation mapping (glossary) management ---
+
+export interface MappingListPayload {
+  /** Optional free-text search across English / 简体中文 / 繁體中文. */
+  search?: string;
+}
+
+export interface MappingAddPayload {
+  en: string;
+  zhCN: string;
+  zhTW: string;
+}
+
+export interface MappingUpdatePayload {
+  id: string;
+  en: string;
+  zhCN: string;
+  zhTW: string;
+}
+
+export interface MappingDeletePayload {
+  id: string;
+}
+
+/** Result of parsing an import file (before the user confirms the import). */
+export interface MappingImportParseResult {
+  fileName: string;
+  rows: import('./mapping.types').MappingImportRow[];
+}
+
+export interface MappingImportPayload {
+  rows: import('./mapping.types').MappingImportRow[];
 }

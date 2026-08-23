@@ -1,5 +1,5 @@
 import type { DocGenState } from '../../../shared/types/workflow.types';
-import type { AIProvider } from '../ai-providers/base.provider';
+import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
 import type { DocumentSearchService } from '../rag/local-search.service';
 import { FileParserAgent } from '../agents/file-parser.agent';
 import { AnalyzerAgent } from '../agents/analyzer.agent';
@@ -14,10 +14,11 @@ import { PAUSE_STAGES, getStatusForStage, nextStage } from './state-machine';
 import { v4 as uuidv4 } from 'uuid';
 import type { OutputDocument, UploadedFile, DocumentDraft } from '../../../shared/types/document.types';
 import type { StageName } from '../../../shared/types/workflow.types';
+import type { PromptOverrides } from '../prompts';
 import log from 'electron-log';
 
 export type ProgressCallback = (stage: StageName, message: string, data?: unknown) => void;
-export type StreamCallback = (stage: StageName, chunk: string) => void;
+export type StreamCallback = (stage: StageName, chunk: AIStreamChunk) => void;
 
 export interface PipelineConfig {
   provider: AIProvider;
@@ -26,6 +27,8 @@ export interface PipelineConfig {
   signal?: AbortSignal;
   onProgress?: ProgressCallback;
   onStream?: StreamCallback;
+  /** 用户配置的提示词覆盖（按提示词键），应用到各 Agent 的 system prompt。 */
+  promptOverrides?: PromptOverrides;
 }
 
 export async function runUploadParseStage(
@@ -62,6 +65,9 @@ export async function runUploadParseStage(
   const agent = new FileParserAgent(config.provider, {
     onProgress: (msg) => config.onProgress?.('upload_parse', msg),
     signal: config.signal,
+    promptOverride: config.promptOverrides?.fileParser,
+    promptOverrides: config.promptOverrides,
+    parseInstruction: state.parseInstruction,
   });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('upload_parse', chunk));
   config.onProgress?.('upload_parse', '🤖 AI 正在解析文档内容...');
@@ -117,6 +123,8 @@ export async function runAnalyzeStage(
   const agent = new AnalyzerAgent(config.provider, {
     onProgress: (msg) => config.onProgress?.('analyze', msg),
     signal: config.signal,
+    promptOverride: config.promptOverrides?.analyzer,
+    promptOverrides: config.promptOverrides,
   });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('analyze', chunk));
   config.onProgress?.('analyze', '🤖 AI 深度分析中...');
@@ -128,7 +136,11 @@ export async function runDraftStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('draft', '✍️ AI 正在生成文档草稿...');
-  const agent = new WriterAgent(config.provider, { signal: config.signal });
+  const agent = new WriterAgent(config.provider, {
+    signal: config.signal,
+    documentOutline: state.documentOutline,
+    promptOverride: config.promptOverrides?.writer,
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('draft', chunk));
   return agent.execute(state);
 }
@@ -138,7 +150,11 @@ export async function runAiReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('ai_review', '🔎 AI 正在进行质量审查...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'ai_review', signal: config.signal });
+  const agent = new ReviewerAgent(config.provider, {
+    mode: 'ai_review',
+    signal: config.signal,
+    promptOverride: config.promptOverrides?.['reviewer.aiReview'],
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('ai_review', chunk));
   return agent.execute(state);
 }
@@ -148,7 +164,11 @@ export async function runPostEditReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('post_edit_review', '🔎 AI 正在进行编辑后审查...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'post_edit_review', signal: config.signal });
+  const agent = new ReviewerAgent(config.provider, {
+    mode: 'post_edit_review',
+    signal: config.signal,
+    promptOverride: config.promptOverrides?.['reviewer.postEditReview'],
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('post_edit_review', chunk));
   return agent.execute(state);
 }
@@ -158,9 +178,15 @@ export async function runLocalizeStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   const langLabel = state.targetLanguage === 'zh-TW' ? '繁體中文（台灣）' :
-    state.targetLanguage === 'zh-HK' ? '繁體中文（香港）' : '简体中文';
+    state.targetLanguage === 'en' ? 'English（英文）' : '简体中文';
   config.onProgress?.('localize', `🌐 AI 正在本地化为 ${langLabel}...`);
-  const agent = new LocalizerAgent(config.provider, { signal: config.signal });
+  // Long-output stage: give reasoning models (e.g. DeepSeek thinking variants)
+  // enough budget so the answer isn't starved by the thinking phase (128k).
+  const agent = new LocalizerAgent(config.provider, {
+    signal: config.signal,
+    maxTokens: 128000,
+    promptOverride: config.promptOverrides?.localizer,
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('localize', chunk));
   return agent.execute(state);
 }
@@ -170,7 +196,11 @@ export async function runLocalizeAiReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('localize_ai_review', '🔎 AI 正在审查本地化质量...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'localize_ai_review', signal: config.signal });
+  const agent = new ReviewerAgent(config.provider, {
+    mode: 'localize_ai_review',
+    signal: config.signal,
+    promptOverride: config.promptOverrides?.['reviewer.localizeAiReview'],
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('localize_ai_review', chunk));
   return agent.execute(state);
 }
@@ -226,7 +256,11 @@ export async function runDitaAiReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('dita_ai_review', '🔎 AI 正在审查 DITA XML 结构...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'dita_ai_review', signal: config.signal });
+  const agent = new ReviewerAgent(config.provider, {
+    mode: 'dita_ai_review',
+    signal: config.signal,
+    promptOverride: config.promptOverrides?.['reviewer.ditaAiReview'],
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('dita_ai_review', chunk));
   return agent.execute(state);
 }

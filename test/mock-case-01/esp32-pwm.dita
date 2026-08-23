@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE concept PUBLIC "-//OASIS//DTD DITA Concept//EN" "concept.dtd">
+<concept id="esp32-ledc-pwm-dita-test-spec">
+  <title>ESP32 LEDC PWM Control — DITA Documentation Test Specification</title>
+  <conbody>
+    <section><title>1. Executive Summary</title>
+    <p>This document defines the scope, requirements, and acceptance criteria for generating DITA-based technical documentation covering Pulse-Width Modulation (PWM) control on the ESP32 microcontroller using the LEDC (LED Control) peripheral. The primary objective is to produce a complete set of DITA topics — concept, task, and reference — that enable embedded firmware engineers and technical writers to configure and control PWM output on an ESP32 device.</p>
+    <p>The specification consolidates two input sources (e.g., &apos;Source Document A&apos; and &apos;Source Document B&apos;) into a unified test set that serves as the basis for automated or manual DITA content generation. It emphasizes both technical accuracy and adherence to structured documentation best practices, including prerequisites, code examples, troubleshooting guidance, and validation criteria.</p>
+    <p>The target hardware platform is the <b>ESP32-WROOM-32</b> module, with a reference implementation using <b>GPIO18</b> at a <b>5 kHz PWM frequency</b> and <b>8-bit resolution</b>.</p>
+    </section>
+    <section><title>2. Product/Feature Overview</title>
+    <section><title>2.1 ESP32 LEDC Peripheral</title> ... </section>
+    <p>The ESP32 integrates a dedicated <b>LEDC (LED Control) peripheral</b> designed for generating PWM signals. The LEDC module provides:</p>
+    <ul><li><p>A hierarchical model of <b>timers</b> and <b>channels</b> that map PWM signals to physical GPIO pins.</p></li><li><p>Flexible frequency and resolution configuration to support a wide range of applications, from LED dimming to motor control.</p></li><li><p>Hardware-generated PWM output, offloading timing precision from the CPU.</p></li></ul>
+    <p><b>2.2 Documentation Deliverables</b></p>
+    <p>The documentation set consists of three DITA topics, each serving a distinct purpose:</p>
+    <simpletable><sthead><stentry>Deliverable</stentry><stentry>Topic Type</stentry><stentry>Purpose</stentry></sthead><strow><stentry><codeph>concept.dita</codeph></stentry><stentry>Concept</stentry><stentry>Defines PWM fundamentals and explains the ESP32 LEDC timer/channel architecture</stentry></strow></simpletable>
+    <p>| <codeph>task.dita</codeph> | Task | Provides step-by-step instructions for configuring 5 kHz PWM on GPIO18 and updating duty cycle |</p>
+    <p>| <codeph>reference.dita</codeph> | Reference | Summarizes the LEDC API functions, their arguments, and valid value ranges |</p>
+    <p>| <codeph>map.ditamap</codeph> | Map | Defines the navigation order and cross-references for the three topics |</p>
+    <p><b>2.3 Target Audience</b></p>
+    <p>The documentation is intended for two primary audiences:</p>
+    <ul><li><p><b>Embedded firmware engineers</b> — who require precise API details, configuration steps, and hardware constraints.</p></li><li><p><b>Technical writers</b> — who need a consistent, structured documentation model that can be extended to other ESP32 peripherals.</p></li></ul>
+    </section>
+    <section><title>3. Technical Specifications</title>
+    <p><b>3.1 Hardware Context</b></p>
+    <p>| Parameter | Value |</p>
+    <p>|---|---|</p>
+    <p>| Target Module | ESP32-WROOM-32 |</p>
+    <p>| PWM Output Pin | GPIO18 |</p>
+    <p>| PWM Frequency | 5000 Hz (5 kHz) |</p>
+    <p>| Resolution | 8-bit (duty cycle values 0–255) |</p>
+    <p><b>3.2 PWM Configuration Summary</b></p>
+    <p>The reference configuration establishes a 5 kHz PWM signal on GPIO18 with an 8-bit duty-cycle resolution. This yields a duty-cycle step granularity of approximately 0.39% per count, allowing fine-grained control over the output signal.</p>
+    <p><b>3.3 LEDC API Reference</b></p>
+    <p>The reference topic must document the following API functions:</p>
+    <p>| Function | Signature | Purpose | Key Arguments | Value Ranges | Usage Notes |</p>
+    <p>|---|---|---|---|</p>
+    <simpletable><sthead><stentry>Function</stentry><stentry>Signature</stentry><stentry>Purpose</stentry><stentry>Key Arguments</stentry><stentry>Value Ranges</stentry><stentry>Usage Notes</stentry></sthead><strow><stentry>ledcSetup</stentry><stentry>ledcSetup(channel, freq, resolution_bits)</stentry><stentry>Configure LEDC timer frequency and resolution</stentry><stentry>channel, freq, resolution_bits</stentry><stentry>Channel: 0–15; Frequency: maximum ≈ source_clock / 2^resolution_bits; for 8-bit resolution, maximum ≈ 312.5 kHz (assuming 80 MHz APB clock), so 5 kHz is valid; Resolution: 1–20 bits (ESP32)</stentry><stentry>If the Arduino core API imposes a 16-bit limit, state that limit explicitly.</stentry></strow></simpletable>
+    <p>| <codeph>ledcAttachPin</codeph> | Bind a GPIO pin to an LEDC channel | <codeph>pin</codeph>, <codeph>channel</codeph> | Pin: any GPIO that can be used as an output and is not input-only (e.g., GPIO34–39 are input-only on ESP32); Channel: 0–15 |</p>
+    <p>| <codeph>ledcWrite</codeph> | Set the duty cycle for a channel | <codeph>channel</codeph>, <codeph>duty</codeph> | Duty: 0 to (2^resolution − 1), i.e., 0–255 for 8-bit |</p>
+    </section>
+    <section><title>4. Key Features and Functions</title>
+    <p><b>4.1 Concept Topic — PWM and the LEDC Timer/Channel Model</b></p>
+    <p>The concept topic must cover:</p>
+    <ul><li><p><b>PWM fundamentals</b> — definition of Pulse-Width Modulation, duty cycle, and frequency; typical use cases such as LED dimming, motor speed control, and signal generation.</p></li><li><p><b>LEDC timer/channel mapping</b> — how ESP32 timers define the frequency and resolution base, and how channels distribute the PWM signal to GPIO pins.</p></li><li><p><b>Channel-to-GPIO routing</b> — the relationship between LEDC channels and physical pins, including the ability to route each channel to a different GPIO pin, while noting that a channel can be attached to only one pin at a time.</p></li></ul>
+    <p><b>4.2 Task Topic — Configuring 5 kHz PWM on GPIO18</b></p>
+    <p>The task topic must provide step-by-step instructions for:</p>
+    <ol><li><p>Initialize the LEDC timer with <codeph>ledcSetup</codeph> using a 5 kHz frequency and 8-bit resolution.</p></li><li><p>Attach GPIO18 to an LEDC channel using <codeph>ledcAttachPin</codeph>.</p></li><li><p>Write an initial duty cycle using <codeph>ledcWrite</codeph>.</p></li><li><p>Demonstrate duty-cycle updates by modifying the <codeph>ledcWrite</codeph> value at runtime.</p></li></ol>
+    <p>The task topic must include complete, compilable code examples, and each step&apos;s code snippet should be presented in the context of the full example.</p>
+    <p><b>4.3 Reference Topic — API Summary</b></p>
+    <p>The reference topic must present a structured API table (see Section 3.3) that includes:</p>
+    <ul><li><p>Function signatures and parameter descriptions.</p></li><li><p>Valid argument ranges and default values (or state explicitly when no default exists).</p></li><li><p>Usage notes and common pitfalls.</p></li></ul>
+    <p><b>4.4 Validation Test Cases</b></p>
+    <p>The following test cases are specified to validate both the documentation and the underlying implementation:</p>
+    <p>| Test Case | Description | Pass Criteria |</p>
+    <p>|---|---|---|</p>
+    <p>| Duty-Cycle Ramp | Ramp duty cycle from 0 to 255 (0% to 100%) in steps of 5 with a dwell time of 100 ms per step | Output smoothly transitions with no abrupt jumps or dropouts |</p>
+    <p>| Flicker Verification | Observe PWM output under varying duty cycles | Use an oscilloscope to verify that the PWM frequency and duty cycle remain stable with no missing pulses; the load should show no visible flicker |</p>
+    <p>| Stability Check | Run continuous PWM output for 10 minutes | Frequency remains within ±1% of 5 kHz and duty cycle remains within ±1% of the setpoint over 10 minutes, with no glitches or dropouts |</p>
+    </section>
+    <section><title>5. Requirements and Dependencies</title>
+    <p><b>5.1 Prerequisites</b></p>
+    <p>Generated documentation must clearly state the following prerequisites:</p>
+    <ul><li><p><b>Arduino ESP32 core</b> installation (board support package for ESP32 development).</p></li><li><p>Supported development environment (Arduino IDE or compatible toolchain).</p></li><li><p>ESP32-WROOM-32 (or compatible) development board with GPIO18 accessible.</p></li></ul>
+    <p><b>5.2 Cautions and Constraints</b></p>
+    <p>The documentation must include appropriate cautionary notes:</p>
+    <ul><li><p><b>GPIO capability</b> — not all GPIO pins are suitable for PWM output; verify pin availability, input-only GPIOs (e.g., GPIO34–39), and any strapping-pin restrictions on the target board.</p></li><li><p><b>Shared timer channels</b> — LEDC channels that share a timer must use the same frequency and resolution; changing the timer settings affects all attached channels.</p></li><li><p><b>Resolution vs. frequency trade-off</b> — higher resolution reduces the maximum achievable frequency; verify that the selected combination is valid for the target application.</p></li></ul>
+    <p><b>5.3 Troubleshooting Guidance</b></p>
+    <p>Documentation must include troubleshooting entries covering common issues such as:</p>
+    <ul><li><p>No signal on GPIO18 (check channel attach and pin muxing).</p></li><li><p>Unexpected frequency or duty cycle (verify timer configuration and resolution bits).</p></li><li><p>Conflicts with other peripherals sharing the same timer or channel.</p></li></ul>
+    </section>
+    <section><title>6. Implementation Notes</title>
+    <p><b>6.1 Validation Checklist</b></p>
+    <p>Before the documentation set is considered complete, the following checklist must be satisfied:</p>
+    <ul><li><p>[ ] All three DITA topics (<codeph>concept.dita</codeph>, <codeph>task.dita</codeph>, <codeph>reference.dita</codeph>) are present and correctly structured.</p></li><li><p>[ ] Prerequisites section is included in the task topic.</p></li><li><p>[ ] All task steps contain code blocks with complete, compilable examples.</p></li><li><p>[ ] Troubleshooting entries are present and address realistic failure scenarios.</p></li><li><p>[ ] API reference table includes all arguments, ranges, and usage notes.</p></li><li><p>[ ] Technical accuracy is verified against the ESP32 technical reference manual and the Arduino ESP32 core documentation.</p></li></ul>
+    <p><b>6.2 Documentation Structure Notes</b></p>
+    <ul><li><p>This document is a <b>test specification</b>, not a finished DITA topic. It serves as the input contract for automated or manual DITA content generation.</p></li><li><p>The concept topic should prioritize explanatory clarity, using diagrams or textual descriptions of the timer/channel hierarchy where helpful.</p></li><li><p>The task topic should follow a strict procedural format: prerequisites, steps with code, and expected outcomes.</p></li><li><p>The reference topic should be exhaustive but concise, favoring tables and bullet lists over prose.</p></li></ul>
+    <p><b>6.3 Cross-References</b></p>
+    <p>The final DITA topic set should include a DITA map that references the three topics and defines the navigation order. The topics should also include cross-references as follows:</p>
+    <ul><li><p><codeph>task.dita</codeph> references <codeph>concept.dita</codeph> for background on PWM and LEDC architecture.</p></li><li><p><codeph>task.dita</codeph> references <codeph>reference.dita</codeph> for API details.</p></li><li><p><codeph>reference.dita</codeph> references <codeph>concept.dita</codeph> for the timer/channel model explanation.</p></li></ul>
+    </section>
+    <p><i>This specification consolidates input from both source documents and supersedes any conflicting details in favor of the more specific hardware and test-case information provided in the extended source document.</i></p>
+  </conbody>
+</concept>

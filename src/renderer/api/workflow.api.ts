@@ -18,10 +18,15 @@ function getElectronApi() {
 }
 
 export const workflowApi = {
-  start: async (filePaths: string[]): Promise<DocGenState> => {
+  start: async (
+    filePaths: string[],
+    documentOutline?: import('../../shared/types/document.types').DocumentOutline,
+    parseInstruction?: string,
+    fileInstructions?: Record<string, string>
+  ): Promise<DocGenState> => {
     const projectId = uuidv4();
     wfLog('API', 'Sending workflow:start', { projectId, fileCount: filePaths.length, filePaths });
-    const state = await getElectronApi().workflow.start({ projectId, filePaths });
+    const state = await getElectronApi().workflow.start({ projectId, filePaths, documentOutline, parseInstruction, fileInstructions });
     wfLog('API', 'Received workflow:start response', {
       projectId: state.projectId,
       stage: state.currentStage,

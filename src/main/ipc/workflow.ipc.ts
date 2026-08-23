@@ -17,7 +17,13 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
     allowFileReadMany(payload.filePaths ?? []);
     const projectId = payload.projectId ?? uuidv4();
     try {
-      const state = await engine.startWorkflow(projectId, payload.filePaths ?? []);
+      const state = await engine.startWorkflow(
+        projectId,
+        payload.filePaths ?? [],
+        payload.documentOutline,
+        payload.parseInstruction,
+        payload.fileInstructions
+      );
       log.info('[WF][IPC] workflow:start completed', {
         projectId: state.projectId,
         stage: state.currentStage,
@@ -76,7 +82,7 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
     engine.resumeFromHumanInput(payload.projectId, {
       humanConfirmed: payload.approved,
       targetLanguage: payload.targetLanguage ?? 'zh-CN',
-      skipLocalization: payload.skipLocalization ?? false,
+      skipLocalization: payload.skipLocalization ?? true,
       // If the user edited drafts in Stage 6b, store as humanEditedDrafts so
       // the pipeline applies them to drafts for subsequent stages (localize, etc.).
       ...(payload.editedDrafts ? { humanEditedDrafts: payload.editedDrafts, humanEdits: payload.editedDrafts[0]?.content ?? '' } : {}),

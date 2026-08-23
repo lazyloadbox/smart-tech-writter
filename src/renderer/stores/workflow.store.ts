@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import type { DocGenState, StageName, WorkflowStatus, WorkflowLogEntry } from '../../shared/types/workflow.types';
-import type { UploadedFile, AnalysisResult, DocumentDraft, ReviewComment, OutputDocument, SearchResult, LocalizeLanguage } from '../../shared/types/document.types';
+import type { UploadedFile, AnalysisResult, DocumentDraft, ReviewComment, OutputDocument, SearchResult, LocalizeLanguage, DocumentOutline } from '../../shared/types/document.types';
 
 interface StreamChunk {
   stage: StageName;
+  /** `thinking` = reasoning_content (model's thinking), `content` = visible output. */
+  type: 'thinking' | 'content';
   content: string;
   timestamp: string;
 }
@@ -20,8 +22,8 @@ interface WorkflowStore extends DocGenState {
   // --- Streaming support ---
   /** Accumulated AI stream chunks */
   streamChunks: StreamChunk[];
-  /** Append a stream chunk */
-  appendStreamChunk: (stage: StageName, content: string) => void;
+  /** Append a typed stream chunk ({ type, text }) */
+  appendStreamChunk: (stage: StageName, chunk: { type: 'thinking' | 'content'; text: string }) => void;
   /** Clear stream chunks (e.g., on stage transition) */
   clearStreamChunks: () => void;
   // --- Progress message ---
@@ -48,7 +50,18 @@ const initialState: DocGenState = {
   outputDocuments: [],
   ingestContext: '',
   targetLanguage: 'zh-CN',
-  skipLocalization: false,
+  documentOutline: {
+    sections: [
+      'Executive Summary',
+      'Product/Feature Overview',
+      'Technical Specifications',
+      'Key Features and Functions',
+      'Requirements and Dependencies',
+      'Implementation Notes',
+    ],
+    mergeIntoSingle: true,
+  },
+  skipLocalization: true,
   workflowLogs: [],
   currentStage: 'upload_parse',
   status: 'IDLE',
@@ -66,9 +79,12 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
     set((s) => ({ workflowLogs: [...s.workflowLogs, ...entries] })),
   setTargetLanguage: (lang) => set({ targetLanguage: lang }),
   reset: () => set({ ...initialState, streamChunks: [], currentProgressMessage: '' }),
-  appendStreamChunk: (stage, content) =>
+  appendStreamChunk: (stage, chunk) =>
     set((s) => ({
-      streamChunks: [...s.streamChunks, { stage, content, timestamp: new Date().toISOString() }],
+      streamChunks: [
+        ...s.streamChunks,
+        { stage, type: chunk.type, content: chunk.text, timestamp: new Date().toISOString() },
+      ],
     })),
   clearStreamChunks: () => set({ streamChunks: [] }),
   setProgressMessage: (msg) => set({ currentProgressMessage: msg }),

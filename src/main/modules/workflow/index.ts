@@ -4,7 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import log from 'electron-log';
 import { Command } from '@langchain/langgraph';
 import type { DocGenState, StageName, WorkflowStatus, WorkflowLogEntry } from '../../../shared/types/workflow.types';
-import type { AIProvider } from '../ai-providers/base.provider';
+import type { DocumentOutline } from '../../../shared/types/document.types';
+import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
 import type { DocumentSearchService } from '../rag/local-search.service';
 import { getDatabase } from '../storage/database';
 import { getStatusForStage, PAUSE_STAGES, STAGE_ORDER } from './state-machine';
@@ -12,6 +13,7 @@ import { buildWorkflowGraph } from './langgraph/graph';
 import { getCheckpointer } from './langgraph/checkpointer';
 import { WorkflowEmitterImpl } from './langgraph/emitter';
 import type { WorkflowGraphState } from './langgraph/graph-state';
+import { DEFAULT_DOCUMENT_OUTLINE, PROMPTS, buildAiEditDraftUserPrompt, buildSystemPrompt, loadPromptOverrides } from '../prompts';
 
 /**
  * WorkflowEngine — LangGraph-backed facade.
@@ -51,7 +53,13 @@ export class WorkflowEngine {
     this.provider = provider;
   }
 
-  async startWorkflow(projectId: string, filePaths: string[]): Promise<DocGenState> {
+  async startWorkflow(
+    projectId: string,
+    filePaths: string[],
+    outline?: DocumentOutline,
+    parseInstruction?: string,
+    fileInstructions?: Record<string, string>
+  ): Promise<DocGenState> {
     log.info('[WF][Engine] startWorkflow requested', { projectId, fileCount: filePaths.length, filePaths });
     if (filePaths.length === 0) {
       const message = 'No input files were provided to start workflow.';
@@ -68,6 +76,7 @@ export class WorkflowEngine {
         size: 0,
         type: path.extname(p),
         parseStatus: 'pending',
+        parseInstruction: fileInstructions?.[p]?.trim() || undefined,
       })),
       analysisResults: [],
       referenceSearchResults: [],
@@ -83,7 +92,10 @@ export class WorkflowEngine {
       outputDocuments: [],
       ingestContext: '',
       targetLanguage: 'zh-CN',
-      skipLocalization: false,
+      documentOutline: outline ?? DEFAULT_DOCUMENT_OUTLINE,
+      parseInstruction,
+      // Default to skipping localization — the standalone 本地化 feature handles DITA translation.
+      skipLocalization: true,
       workflowLogs: [],
       currentStage: 'upload_parse',
       status: 'RUNNING',
@@ -184,6 +196,7 @@ export class WorkflowEngine {
         provider: this.provider,
         ragService: this.ragService,
         emitter,
+        promptOverrides: loadPromptOverrides(),
       },
     };
     this.running.add(projectId);
@@ -275,15 +288,12 @@ export class WorkflowEngine {
   /**
    * AI-assisted draft editing (Stage 3a review_draft). Unchanged from the
    * legacy engine — streams via the provider directly.
+   * 语言约束不再硬编码为 English：跟随当前草稿的语言，除非指令另有要求。
    */
   async aiEditDraft(projectId: string, currentContent: string, instruction: string): Promise<string> {
     log.info('[WF][Engine] aiEditDraft requested', { projectId, instructionLen: instruction.length, contentLen: currentContent.length });
-    const systemPrompt = `You are an expert technical writer and editor.
-You will be given the current draft of a technical document (in Markdown) and an editing instruction from the user.
-Apply the instruction precisely to the relevant section(s) or content, preserving the overall structure, headings, and Markdown formatting.
-Return ONLY the full edited Markdown document — no explanations, no preamble, no code fences.
-Keep all unchanged sections intact. Maintain the same language (English) unless the instruction asks otherwise.`;
-    const userPrompt = `Editing instruction:\n${instruction}\n\n---\n\nCurrent draft (Markdown):\n${currentContent}\n\n---\n\nApply the instruction and return the complete edited Markdown document.`;
+    const systemPrompt = buildSystemPrompt(PROMPTS.aiEditDraft, loadPromptOverrides().aiEditDraft);
+    const userPrompt = buildAiEditDraftUserPrompt(instruction, currentContent);
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -291,9 +301,17 @@ Keep all unchanged sections intact. Maintain the same language (English) unless 
     ];
 
     let full = '';
-    for await (const chunk of this.provider.stream(messages)) {
-      full += chunk;
+    for await (const chunk of this.provider.streamDetailed(messages, { maxTokens: 128000 })) {
+      if (chunk.type === 'content') full += chunk.text;
       this.emitStream(projectId, 'review_draft', chunk);
+    }
+    if (full.trim().length === 0) {
+      // Reasoning models may return empty streamed content — retry non-streaming.
+      log.warn('[WF][Engine] aiEditDraft stream empty — retrying via complete()', { projectId });
+      full = await this.provider.complete(messages, { maxTokens: 128000 });
+      if (full.trim().length > 0) {
+        this.emitStream(projectId, 'review_draft', { type: 'content', text: full });
+      }
     }
     log.info('[WF][Engine] aiEditDraft completed', { projectId, resultLen: full.length });
     return full;
@@ -330,6 +348,7 @@ Keep all unchanged sections intact. Maintain the same language (English) unless 
         provider: this.provider,
         ragService: this.ragService,
         emitter,
+        promptOverrides: loadPromptOverrides(),
       },
       signal: ac.signal,
     };
@@ -429,10 +448,11 @@ Keep all unchanged sections intact. Maintain the same language (English) unless 
       if (!row) return null;
       const state = JSON.parse(row.state_json) as DocGenState;
       // Backfill fields added after initial release so old persisted states
-      // don't break the pipeline (skipLocalization defaults to false).
-      if (typeof state.skipLocalization !== 'boolean') state.skipLocalization = false;
+      // don't break the pipeline (skipLocalization defaults to true).
+      if (typeof state.skipLocalization !== 'boolean') state.skipLocalization = true;
       if (!Array.isArray(state.humanEditedDrafts)) state.humanEditedDrafts = [];
       if (typeof state.ingestContext !== 'string') state.ingestContext = '';
+      if (!state.documentOutline) state.documentOutline = DEFAULT_DOCUMENT_OUTLINE;
       this.stateCache.set(projectId, state);
       return state;
     } catch {
@@ -440,7 +460,7 @@ Keep all unchanged sections intact. Maintain the same language (English) unless 
     }
   }
 
-  private emitStream(projectId: string, stage: StageName, chunk: string): void {
+  private emitStream(projectId: string, stage: StageName, chunk: AIStreamChunk): void {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
         win.webContents.send('workflow:stream', {
