@@ -100,4 +100,6 @@ local.md
 # Test build output
 test/langgraph/dist/
 
-/scripts/
+# Scripts: keep bump-version.mjs tracked (needed by release workflow), ignore only temp files
+/scripts/tmp-lock.txt
+/scripts/tmp-procs.txt
