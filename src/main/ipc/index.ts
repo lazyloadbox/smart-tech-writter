@@ -1,5 +1,5 @@
 import type { WorkflowEngine } from '../modules/workflow/index';
-import type { LocalSearchService } from '../modules/rag/local-search.service';
+import type { RagService } from '../modules/rag/semantic-search.service';
 import { registerWorkflowHandlers } from './workflow.ipc';
 import { registerFileHandlers } from './file.ipc';
 import { registerRagHandlers } from './rag.ipc';
@@ -7,7 +7,7 @@ import { registerSettingsHandlers } from './settings.ipc';
 
 export function registerAllIpcHandlers(
   engine: WorkflowEngine,
-  ragService: LocalSearchService
+  ragService: RagService
 ): void {
   registerWorkflowHandlers(engine);
   registerFileHandlers(engine);

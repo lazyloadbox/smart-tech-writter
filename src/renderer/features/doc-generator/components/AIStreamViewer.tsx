@@ -22,6 +22,7 @@ const STAGE_LABELS: Record<string, string> = {
   post_edit_review: 'AI 编辑后审查',
   localize: 'AI 本地化',
   localize_ai_review: 'AI 本地化审查',
+  dita_ai_review: 'AI DITA 结构审查',
 };
 
 const STAGE_DESCRIPTIONS: Record<string, string> = {
@@ -32,6 +33,7 @@ const STAGE_DESCRIPTIONS: Record<string, string> = {
   post_edit_review: 'AI 正在对比编辑前后的变更，验证修改合理性…',
   localize: 'AI 正在将文档翻译为目标语言…',
   localize_ai_review: 'AI 正在审查本地化翻译质量…',
+  dita_ai_review: 'AI 正在审查 DITA XML 结构、嵌套与转义…',
 };
 
 /**
@@ -251,7 +253,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
   // ── Early-return logic after all hooks ─────────────────────────────────
   const aiStages: StageName[] = [
     'upload_parse', 'analyze', 'draft', 'ai_review',
-    'post_edit_review', 'localize', 'localize_ai_review',
+    'post_edit_review', 'localize', 'localize_ai_review', 'dita_ai_review',
   ];
   const isAiStage = aiStages.includes(currentStage);
 

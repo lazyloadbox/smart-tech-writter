@@ -57,8 +57,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('file:showInFolder', { filePath }),
     downloadZip: (projectId: string) =>
       ipcRenderer.invoke('file:downloadZip', { projectId }),
-    saveDita: (filePath: string, fileName: string) =>
-      ipcRenderer.invoke(IPC_CHANNELS.FILE_SAVE_DITA, { filePath, fileName }),
+    saveDita: (filePath: string, fileName: string, format?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_SAVE_DITA, { filePath, fileName, format }),
     exportAll: (projectId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_ALL, { projectId }),
   },
@@ -67,6 +67,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.RAG_QUERY, { query }),
     addDocument: (filePath: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.RAG_ADD_DOCUMENT, { filePath }),
+    removeDocument: (filePath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.RAG_REMOVE_DOCUMENT, { filePath }),
+    clearIndex: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.RAG_CLEAR_INDEX),
+    indexStats: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.RAG_INDEX_STATS),
   },
   settings: {
     get: (key: string) =>

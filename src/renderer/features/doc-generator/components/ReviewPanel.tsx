@@ -5,7 +5,12 @@ import { normalizeComments, typeIcon, typeLabel, typeColor } from './ReviewComme
 interface ReviewPanelProps {
   drafts: DocumentDraft[];
   comments: ReviewComment[];
-  onSubmit: (editedContent: string, acceptedIds: string[]) => void;
+  /**
+   * Called with the FULL edited drafts array (multi-draft support, M1) — the
+   * active doc's effective content is applied to its slot, other docs are
+   * passed through unchanged.
+   */
+  onSubmit: (editedDrafts: DocumentDraft[], acceptedIds: string[]) => void;
   title?: string;
   submitLabel?: string;
   /** Optional content rendered on the left side of the footer (e.g. language selector). */
@@ -395,7 +400,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               </span>
             )}
             <button
-              onClick={() => onSubmit(effectiveContent, Array.from(accepted))}
+              onClick={() => {
+                // Build the full edited drafts array: apply the active doc's
+                // effective content to its slot, keep the rest unchanged (M1).
+                const editedDrafts = drafts.map((d, i) =>
+                  i === activeDoc
+                    ? { ...d, content: effectiveContent, updatedAt: new Date().toISOString() }
+                    : d
+                );
+                onSubmit(editedDrafts, Array.from(accepted));
+              }}
               className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors"
             >
               {submitLabel}

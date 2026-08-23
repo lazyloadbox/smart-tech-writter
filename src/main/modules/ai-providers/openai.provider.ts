@@ -17,23 +17,29 @@ export class OpenAIProvider implements AIProvider {
   }
 
   async complete(messages: AIMessage[], options?: CompletionOptions): Promise<string> {
-    const response = await this.client.chat.completions.create({
-      model: options?.model ?? this.defaultModel,
-      messages,
-      temperature: options?.temperature ?? 0.7,
-      max_tokens: options?.maxTokens,
-    });
+    const response = await this.client.chat.completions.create(
+      {
+        model: options?.model ?? this.defaultModel,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens,
+      },
+      { signal: options?.signal }
+    );
     return response.choices[0]?.message?.content ?? '';
   }
 
   async *stream(messages: AIMessage[], options?: CompletionOptions): AsyncIterable<string> {
-    const stream = await this.client.chat.completions.create({
-      model: options?.model ?? this.defaultModel,
-      messages,
-      temperature: options?.temperature ?? 0.7,
-      max_tokens: options?.maxTokens,
-      stream: true,
-    });
+    const stream = await this.client.chat.completions.create(
+      {
+        model: options?.model ?? this.defaultModel,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens,
+        stream: true,
+      },
+      { signal: options?.signal }
+    );
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
       if (content) yield content;

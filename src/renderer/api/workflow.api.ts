@@ -43,15 +43,25 @@ export const workflowApi = {
     return status;
   },
 
+  pause: (projectId: string) => {
+    wfLog('API', 'Sending workflow:pause', { projectId });
+    return getElectronApi().workflow.pause(projectId);
+  },
+
+  resume: (projectId: string) => {
+    wfLog('API', 'Sending workflow:resume', { projectId });
+    return getElectronApi().workflow.resume(projectId);
+  },
+
   submitHumanReview: (
     projectId: string,
-    editedContent: string,
+    editedDrafts: import('../../shared/types/document.types').DocumentDraft[],
     acceptedCommentIds: string[]
   ) => {
-    wfLog('API', 'Sending workflow:humanReviewSubmit', { projectId, acceptedCount: acceptedCommentIds.length });
+    wfLog('API', 'Sending workflow:humanReviewSubmit', { projectId, draftCount: editedDrafts.length, acceptedCount: acceptedCommentIds.length });
     return getElectronApi().workflow.submitHumanReview({
       projectId,
-      editedContent,
+      editedDrafts,
       acceptedCommentIds,
     });
   },
@@ -60,7 +70,7 @@ export const workflowApi = {
     projectId: string,
     approved: boolean,
     targetLanguage?: import('../../shared/types/document.types').LocalizeLanguage,
-    editedContent?: string,
+    editedDrafts?: import('../../shared/types/document.types').DocumentDraft[],
     acceptedCommentIds?: string[],
     skipLocalization?: boolean
   ) => {
@@ -69,7 +79,7 @@ export const workflowApi = {
       approved,
       targetLanguage,
       skipLocalization,
-      hasEditedContent: !!editedContent,
+      hasEditedDrafts: !!editedDrafts,
       acceptedCount: acceptedCommentIds?.length ?? 0,
     });
     return getElectronApi().workflow.submitHumanConfirm({
@@ -77,7 +87,7 @@ export const workflowApi = {
       approved,
       targetLanguage,
       skipLocalization,
-      editedContent,
+      editedDrafts,
       acceptedCommentIds,
     });
   },

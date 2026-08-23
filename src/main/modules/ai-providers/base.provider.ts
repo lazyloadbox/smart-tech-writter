@@ -7,6 +7,8 @@ export interface CompletionOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /** AbortSignal to cancel an in-flight request (pause / go-back). */
+  signal?: AbortSignal;
 }
 
 export interface AIProvider {

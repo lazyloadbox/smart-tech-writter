@@ -5,6 +5,7 @@ import path from 'node:path';
 const archiver = require('archiver') as (format: string, opts?: object) => import('archiver').Archiver;
 import { IPC_CHANNELS } from '../../shared/types/ipc.types';
 import type { WorkflowEngine } from '../modules/workflow/index';
+import { allowFileReadMany, assertFileReadAllowed } from '../modules/security/path-guard';
 import log from 'electron-log';
 
 export function registerFileHandlers(engine: WorkflowEngine): void {
@@ -17,11 +18,15 @@ export function registerFileHandlers(engine: WorkflowEngine): void {
         { name: 'All Files', extensions: ['*'] },
       ],
     });
+    // Only files the user explicitly picked via the dialog may be read back.
+    allowFileReadMany(result.filePaths);
     return result.filePaths;
   });
 
   ipcMain.handle(IPC_CHANNELS.FILE_READ, async (_event, { filePath }) => {
-    if (!path.isAbsolute(filePath)) throw new Error('Invalid file path');
+    // Path-scope validation: only user-approved files or files under trusted
+    // app-owned directories (projects output, RAG search dir) are readable.
+    assertFileReadAllowed(filePath);
     return fs.readFileSync(filePath, 'utf-8');
   });
 
@@ -55,21 +60,27 @@ export function registerFileHandlers(engine: WorkflowEngine): void {
     });
   });
 
-  // Save individual DITA file to user-chosen location
-  ipcMain.handle(IPC_CHANNELS.FILE_SAVE_DITA, async (event, { filePath, fileName }) => {
-    log.info('[File][IPC] file:saveDita', { filePath, fileName });
+  // Save an individual output document (DITA or DOCX) to a user-chosen location
+  ipcMain.handle(IPC_CHANNELS.FILE_SAVE_DITA, async (event, { filePath, fileName, format }) => {
+    log.info('[File][IPC] file:saveDita', { filePath, fileName, format });
     if (!fs.existsSync(filePath)) {
       log.warn('[File][IPC] file:saveDita - source file not found', { filePath });
       return null;
     }
 
+    const isDocx = format === 'docx' || fileName.toLowerCase().endsWith('.docx');
     const win = BrowserWindow.fromWebContents(event.sender);
     const saveResult = await dialog.showSaveDialog(win!, {
       defaultPath: fileName,
-      filters: [
-        { name: 'DITA XML', extensions: ['dita', 'xml'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
+      filters: isDocx
+        ? [
+            { name: 'Word 文档', extensions: ['docx'] },
+            { name: 'All Files', extensions: ['*'] },
+          ]
+        : [
+            { name: 'DITA XML', extensions: ['dita', 'xml'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
     });
     if (saveResult.canceled || !saveResult.filePath) return null;
 

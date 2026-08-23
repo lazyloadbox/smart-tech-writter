@@ -1,13 +1,14 @@
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { AIProvider } from '../ai-providers/base.provider';
-import type { LocalSearchService } from '../rag/local-search.service';
+import type { DocumentSearchService } from '../rag/local-search.service';
 import { FileParserAgent } from '../agents/file-parser.agent';
 import { AnalyzerAgent } from '../agents/analyzer.agent';
 import { WriterAgent } from '../agents/writer.agent';
 import { ReviewerAgent } from '../agents/reviewer.agent';
 import { LocalizerAgent } from '../agents/localizer.agent';
 import { createReader } from '../file-readers';
-import { buildDitaXml } from '../document-builder/dita.builder';
+import { buildDitaXml, validateDitaXml } from '../document-builder/dita.builder';
+import { buildDocx } from '../document-builder/docx.builder';
 import { writeProjectBinaryFile } from '../storage/file-storage';
 import { PAUSE_STAGES, getStatusForStage, nextStage } from './state-machine';
 import { v4 as uuidv4 } from 'uuid';
@@ -20,7 +21,9 @@ export type StreamCallback = (stage: StageName, chunk: string) => void;
 
 export interface PipelineConfig {
   provider: AIProvider;
-  ragService: LocalSearchService;
+  ragService: DocumentSearchService;
+  /** AbortSignal from the graph invoke — lets pause/go-back cancel LLM calls. */
+  signal?: AbortSignal;
   onProgress?: ProgressCallback;
   onStream?: StreamCallback;
 }
@@ -56,12 +59,21 @@ export async function runUploadParseStage(
 
   // Now run AI parsing on all 'parsing' files
   const agentState = { ...state, inputFiles: updatedFiles };
-  const agent = new FileParserAgent(config.provider);
+  const agent = new FileParserAgent(config.provider, {
+    onProgress: (msg) => config.onProgress?.('upload_parse', msg),
+    signal: config.signal,
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('upload_parse', chunk));
   config.onProgress?.('upload_parse', '🤖 AI 正在解析文档内容...');
   return agent.execute(agentState);
 }
 
+/**
+ * Ingest stage (M7): aggregates the parsed files into a single structured
+ * context consumed by the analyze stage. Previously this was a counting
+ * no-op; now it produces `ingestContext` (per-file metadata + AI summary +
+ * extracted text) so the analyzer doesn't have to re-read/re-summarize files.
+ */
 export async function runIngestStage(
   state: DocGenState,
   config: PipelineConfig
@@ -70,8 +82,20 @@ export async function runIngestStage(
   const readyFiles = state.inputFiles.filter((f) => f.parseStatus === 'done');
   const errorFiles = state.inputFiles.filter((f) => f.parseStatus === 'error');
   config.onProgress?.('ingest', `就绪文件: ${readyFiles.length} 个${errorFiles.length > 0 ? `, 错误文件: ${errorFiles.length} 个` : ''}`);
-  log.info(`Ingest: ${readyFiles.length} files ready`);
-  return {};
+
+  const sections = readyFiles.map((f) => {
+    const meta = f.metadata && Object.keys(f.metadata).length > 0
+      ? `\nMetadata: ${JSON.stringify(f.metadata)}`
+      : '';
+    const summary = f.parseSummary ? `\nSummary: ${f.parseSummary}` : '';
+    const text = f.extractedText ? `\nContent:\n${f.extractedText}` : '';
+    return `## File: ${f.name} (${f.type || 'unknown'})${meta}${summary}${text}`;
+  });
+  const ingestContext = sections.join('\n\n---\n\n');
+
+  config.onProgress?.('ingest', `✅ 已汇总 ${readyFiles.length} 个文件的结构化数据 (${ingestContext.length} 字符)`);
+  log.info(`Ingest: ${readyFiles.length} files ready, context ${ingestContext.length} chars`);
+  return { ingestContext };
 }
 
 export async function runAnalyzeStage(
@@ -90,7 +114,10 @@ export async function runAnalyzeStage(
   config.onProgress?.('analyze', `找到 ${refResults.length} 份参考资料`, refResults);
 
   const stateWithRefs = { ...state, referenceSearchResults: refResults };
-  const agent = new AnalyzerAgent(config.provider);
+  const agent = new AnalyzerAgent(config.provider, {
+    onProgress: (msg) => config.onProgress?.('analyze', msg),
+    signal: config.signal,
+  });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('analyze', chunk));
   config.onProgress?.('analyze', '🤖 AI 深度分析中...');
   return agent.execute(stateWithRefs);
@@ -101,7 +128,7 @@ export async function runDraftStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('draft', '✍️ AI 正在生成文档草稿...');
-  const agent = new WriterAgent(config.provider);
+  const agent = new WriterAgent(config.provider, { signal: config.signal });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('draft', chunk));
   return agent.execute(state);
 }
@@ -111,7 +138,7 @@ export async function runAiReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('ai_review', '🔎 AI 正在进行质量审查...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'ai_review' });
+  const agent = new ReviewerAgent(config.provider, { mode: 'ai_review', signal: config.signal });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('ai_review', chunk));
   return agent.execute(state);
 }
@@ -121,7 +148,7 @@ export async function runPostEditReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('post_edit_review', '🔎 AI 正在进行编辑后审查...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'post_edit_review' });
+  const agent = new ReviewerAgent(config.provider, { mode: 'post_edit_review', signal: config.signal });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('post_edit_review', chunk));
   return agent.execute(state);
 }
@@ -133,7 +160,7 @@ export async function runLocalizeStage(
   const langLabel = state.targetLanguage === 'zh-TW' ? '繁體中文（台灣）' :
     state.targetLanguage === 'zh-HK' ? '繁體中文（香港）' : '简体中文';
   config.onProgress?.('localize', `🌐 AI 正在本地化为 ${langLabel}...`);
-  const agent = new LocalizerAgent(config.provider);
+  const agent = new LocalizerAgent(config.provider, { signal: config.signal });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('localize', chunk));
   return agent.execute(state);
 }
@@ -143,7 +170,7 @@ export async function runLocalizeAiReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('localize_ai_review', '🔎 AI 正在审查本地化质量...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'localize_ai_review' });
+  const agent = new ReviewerAgent(config.provider, { mode: 'localize_ai_review', signal: config.signal });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('localize_ai_review', chunk));
   return agent.execute(state);
 }
@@ -170,6 +197,13 @@ export async function runDitaBuildStage(
     try {
       config.onProgress?.('dita_build', `转换文档: ${draft.title}`);
       const xml = buildDitaXml(draft);
+      // M8: well-formedness check — surface structural problems immediately
+      // instead of relying on the AI review stage to catch them.
+      const { valid, errors } = validateDitaXml(xml);
+      if (!valid) {
+        config.onProgress?.('dita_build', `⚠ DITA 校验警告: ${draft.title} - ${errors.join('; ')}`);
+        log.warn('[WF][Pipeline] DITA validation failed for draft', { title: draft.title, errors });
+      }
       ditaDocuments.push({
         id: uuidv4(),
         title: draft.title,
@@ -192,7 +226,7 @@ export async function runDitaAiReviewStage(
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
   config.onProgress?.('dita_ai_review', '🔎 AI 正在审查 DITA XML 结构...');
-  const agent = new ReviewerAgent(config.provider, { mode: 'dita_ai_review' });
+  const agent = new ReviewerAgent(config.provider, { mode: 'dita_ai_review', signal: config.signal });
   if (config.onStream) agent.setStreamCallback((chunk) => config.onStream?.('dita_ai_review', chunk));
   return agent.execute(state);
 }
@@ -201,7 +235,7 @@ export async function runExportStage(
   state: DocGenState,
   config: PipelineConfig
 ): Promise<Partial<DocGenState>> {
-  config.onProgress?.('export', '💾 正在写入 DITA 文件...');
+  config.onProgress?.('export', '💾 正在写入 DITA / DOCX 文件...');
   // Prefer reviewed/edited DITA documents; fall back to building from drafts.
   let ditaDocs = state.ditaDocuments;
   if (ditaDocs.length === 0) {
@@ -218,11 +252,18 @@ export async function runExportStage(
   }
 
   const outputDocuments: OutputDocument[] = [];
+  const now = new Date().toISOString();
   for (const doc of ditaDocs) {
+    const safeName = doc.title.replace(/[/\\?%*:|"<>]/g, '-');
     try {
-      config.onProgress?.('export', `写入文件: ${doc.title}`);
+      config.onProgress?.('export', `写入 DITA 文件: ${doc.title}`);
+      // M8: validate before writing — flag malformed XML instead of shipping it.
+      const { valid, errors } = validateDitaXml(doc.content);
+      if (!valid) {
+        config.onProgress?.('export', `⚠ DITA 校验警告: ${doc.title} - ${errors.join('; ')}`);
+        log.warn('[WF][Pipeline] Export DITA validation failed', { title: doc.title, errors });
+      }
       const buffer = Buffer.from(doc.content, 'utf-8');
-      const safeName = doc.title.replace(/[/\\?%*:|"<>]/g, '-');
       const fileName = `${safeName}.dita`;
       const filePath = writeProjectBinaryFile(state.projectId, fileName, buffer);
       outputDocuments.push({
@@ -232,14 +273,34 @@ export async function runExportStage(
         filePath,
         format: 'dita',
         size: buffer.length,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
       });
     } catch (err) {
       log.error('Export error for DITA doc', doc.title, err);
-      config.onProgress?.('export', `❌ 导出失败: ${doc.title} - ${String(err)}`);
+      config.onProgress?.('export', `❌ DITA 导出失败: ${doc.title} - ${String(err)}`);
+    }
+
+    // M2: also produce a Word (.docx) version of each document.
+    try {
+      config.onProgress?.('export', `生成 DOCX 文件: ${doc.title}`);
+      const docxBuffer = await buildDocx(doc);
+      const docxName = `${safeName}.docx`;
+      const docxPath = writeProjectBinaryFile(state.projectId, docxName, docxBuffer);
+      outputDocuments.push({
+        id: uuidv4(),
+        title: doc.title,
+        fileName: docxName,
+        filePath: docxPath,
+        format: 'docx',
+        size: docxBuffer.length,
+        createdAt: now,
+      });
+    } catch (err) {
+      log.error('Export error for DOCX doc', doc.title, err);
+      config.onProgress?.('export', `❌ DOCX 导出失败: ${doc.title} - ${String(err)}`);
     }
   }
 
-  config.onProgress?.('export', `✅ 成功导出 ${outputDocuments.length} 个 DITA 文档`, outputDocuments);
+  config.onProgress?.('export', `✅ 成功导出 ${outputDocuments.length} 个文档 (DITA + DOCX)`, outputDocuments);
   return { outputDocuments, status: 'COMPLETED', currentStage: 'export' };
 }

@@ -40,6 +40,8 @@ export function registerSettingsHandlers(engine: WorkflowEngine): void {
   ipcMain.handle(IPC_CHANNELS.PROJECTS_DELETE, async (_event, { projectId }) => {
     const db = getDatabase();
     db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+    // Also remove the LangGraph checkpoint thread for this project.
+    await engine.deleteProject(projectId);
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_RELOAD_PROVIDER, async () => {

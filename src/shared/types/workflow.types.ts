@@ -34,6 +34,8 @@ export type WorkflowStatus =
   | 'PAUSED:HUMAN_LOCALIZE_REVIEW'
   | 'PAUSED:REVIEW_DITA'
   | 'PAUSED:HUMAN_DITA_REVIEW'
+  /** User-initiated pause of an in-flight (RUNNING) workflow. */
+  | 'PAUSED:USER'
   | 'COMPLETED'
   | 'FAILED';
 
@@ -64,6 +66,13 @@ export interface DocGenState {
   drafts: import('./document.types').DocumentDraft[];
   aiReviewComments: import('./document.types').ReviewComment[];
   humanEdits: string;
+  /**
+   * Per-draft human edits from the review stages (multi-draft support, M1).
+   * Forward stages use these instead of `drafts` when present; go-back to a
+   * stage at/before human_review replays a checkpoint without them, so the
+   * original drafts are shown again.
+   */
+  humanEditedDrafts: import('./document.types').DocumentDraft[];
   postEditReviewComments: import('./document.types').ReviewComment[];
   localizedDrafts: import('./document.types').DocumentDraft[];
   localizeReviewComments: import('./document.types').ReviewComment[];
@@ -72,6 +81,8 @@ export interface DocGenState {
   /** AI review comments on generated DITA XML */
   ditaReviewComments: import('./document.types').ReviewComment[];
   outputDocuments: import('./document.types').OutputDocument[];
+  /** Combined structured context produced by the ingest stage (M7). */
+  ingestContext: string;
   /** Target language for localization stage */
   targetLanguage: import('./document.types').LocalizeLanguage;
   /**

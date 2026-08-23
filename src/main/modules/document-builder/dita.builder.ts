@@ -250,3 +250,73 @@ export async function buildDita(draft: DocumentDraft): Promise<Buffer> {
   const xml = buildDitaXml(draft);
   return Buffer.from(xml, 'utf-8');
 }
+
+/**
+ * Lightweight XML well-formedness validation (M8).
+ *
+ * The builder is deterministic and escapes all text, but this is a safety net
+ * for hand-edited DITA (the human review stage lets users edit raw XML) and
+ * for future builder changes. Checks:
+ *  1. XML declaration present.
+ *  2. Exactly one root element.
+ *  3. Balanced, properly nested tags (stack-based).
+ *  4. No unescaped `&` or `<` in text content (outside tags/comments/CDATA).
+ */
+export function validateDitaXml(xml: string): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const text = xml ?? '';
+
+  if (!text.trim().startsWith('<?xml')) {
+    errors.push('缺少 XML 声明 (<?xml ... ?>)');
+  }
+
+  // Find all tags (opening, closing, self-closing, processing instructions, comments).
+  const tagRegex = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?([a-zA-Z][\w.-]*)((?:\s+[^<>]*?)?)(\/?)>/g;
+  const stack: string[] = [];
+  let match: RegExpExecArray | null;
+  let rootCount = 0;
+  let lastTagEnd = 0;
+
+  while ((match = tagRegex.exec(text)) !== null) {
+    const full = match[0];
+    // Skip comments / CDATA / processing instructions (no tag name captured).
+    if (full.startsWith('<!--') || full.startsWith('<![CDATA[') || full.startsWith('<?')) {
+      lastTagEnd = tagRegex.lastIndex;
+      continue;
+    }
+    const tagName = match[1];
+    const selfClosing = match[3] === '/';
+
+    // Check for unescaped special chars in the text between this tag and the
+    // previous one. A raw '<' is never valid in text; '&' is only valid when
+    // it starts a well-formed entity reference (&amp; / &#123; / &#x1F;).
+    const between = text.slice(lastTagEnd, match.index);
+    const badAmp = between.match(/&(?!(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][\w.]*);)/g);
+    if (between.includes('<') || (badAmp && badAmp.length > 0)) {
+      errors.push(`文本内容包含未转义的特殊字符: "${between.slice(0, 40)}..."`);
+    }
+
+    if (full.startsWith('</')) {
+      const open = stack.pop();
+      if (open !== tagName) {
+        errors.push(`标签不匹配: </${tagName}> (期望 </${open ?? '无'}> 关闭)`);
+      }
+    } else if (!selfClosing) {
+      // Only the first element at depth 0 is the root.
+      if (stack.length === 0) {
+        rootCount++;
+        if (rootCount > 1) {
+          errors.push(`存在多个根元素: <${tagName}>`);
+        }
+      }
+      stack.push(tagName);
+    }
+    lastTagEnd = tagRegex.lastIndex;
+  }
+
+  if (stack.length > 0) {
+    errors.push(`存在未闭合的标签: ${stack.join(', ')}`);
+  }
+
+  return { valid: errors.length === 0, errors };
+}

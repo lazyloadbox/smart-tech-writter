@@ -1,4 +1,5 @@
 import { BaseAgent } from './base.agent';
+import { summarizeLongText } from '../context';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { UploadedFile } from '../../../shared/types/document.types';
 
@@ -23,7 +24,14 @@ Respond ONLY with valid JSON, no markdown fences.`;
         continue;
       }
       try {
-        const prompt = `Document name: ${file.name}\n\nExtracted text (truncated to 4000 chars):\n${file.extractedText.slice(0, 4000)}`;
+        // Long documents go through map-reduce summarization instead of a hard
+        // head-only truncation, so key facts from the whole document survive.
+        const context = await summarizeLongText(file.extractedText ?? '', {
+          provider: this.provider,
+          signal: this.config.signal,
+          onProgress: (msg) => this.config.onProgress?.(msg),
+        });
+        const prompt = `Document name: ${file.name}\n\nExtracted text:\n${context}`;
         const response = await this.callLLM(prompt);
         let parsed: { summary: string; keyPoints: string[]; keywords: string[]; technicalTerms: string[] };
         try {

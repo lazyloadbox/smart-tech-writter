@@ -3,6 +3,10 @@ import type { DocGenState } from '../../../shared/types/workflow.types';
 
 export interface AgentConfig {
   systemPromptTemplate?: string;
+  /** Optional progress callback for long-running preprocessing (e.g. map-reduce). */
+  onProgress?: (message: string) => void;
+  /** AbortSignal to cancel in-flight LLM calls (pause / go-back). */
+  signal?: AbortSignal;
 }
 
 export abstract class BaseAgent {
@@ -24,8 +28,9 @@ export abstract class BaseAgent {
   /**
    * Call the LLM. If a stream callback has been set via setStreamCallback(),
    * uses the provider's stream() method and invokes the callback for each chunk.
+   * An optional AbortSignal cancels the in-flight request (pause / go-back).
    */
-  protected async callLLM(userPrompt: string, model?: string): Promise<string> {
+  protected async callLLM(userPrompt: string, model?: string, signal?: AbortSignal): Promise<string> {
     const messages = [
       { role: 'system' as const, content: this.systemPrompt },
       { role: 'user' as const, content: userPrompt },
@@ -33,13 +38,13 @@ export abstract class BaseAgent {
 
     if (this._streamCallback) {
       let full = '';
-      for await (const chunk of this.provider.stream(messages, { model })) {
+      for await (const chunk of this.provider.stream(messages, { model, signal: signal ?? this.config.signal })) {
         full += chunk;
         this._streamCallback(chunk);
       }
       return full;
     }
 
-    return this.provider.complete(messages, { model });
+    return this.provider.complete(messages, { model, signal: signal ?? this.config.signal });
   }
 }

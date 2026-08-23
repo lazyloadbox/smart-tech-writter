@@ -1,10 +1,10 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import log from 'electron-log';
 import { getDatabase, getSetting, closeDatabase } from './modules/storage/database';
 import { createProvider } from './modules/ai-providers/index';
-import { LocalSearchService } from './modules/rag/local-search.service';
+import { SemanticSearchService } from './modules/rag/semantic-search.service';
 import { WorkflowEngine } from './modules/workflow/index';
 import { registerAllIpcHandlers } from './ipc/index';
 
@@ -66,12 +66,12 @@ function initializeServices(): void {
     defaultModel: getSetting('openai.model') ?? 'gpt-4o',
   });
 
-  // Build RAG service
+  // Build RAG service (semantic index with keyword fallback)
   const ragDir = getSetting('rag.searchDirectory') ?? '';
-  const ragService = new LocalSearchService(ragDir);
+  const ragService = new SemanticSearchService(provider, ragDir);
 
-  // Build workflow engine (requires mainWindow to be available)
-  workflowEngine = new WorkflowEngine(provider, ragService, mainWindow!);
+  // Build workflow engine (window-agnostic — events broadcast to all windows)
+  workflowEngine = new WorkflowEngine(provider, ragService);
 
   // Register all IPC handlers
   registerAllIpcHandlers(workflowEngine, ragService);
@@ -80,6 +80,8 @@ function initializeServices(): void {
 }
 
 app.on('ready', () => {
+  // Remove the default application menu (File/Edit/View/Window).
+  Menu.setApplicationMenu(null);
   createWindow();
   initializeServices();
 });

@@ -1,4 +1,5 @@
 import { BaseAgent } from './base.agent';
+import { summarizeLongText } from '../context';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { AnalysisResult } from '../../../shared/types/document.types';
 
@@ -18,10 +19,31 @@ Respond ONLY with valid JSON array, no markdown fences.`;
   }
 
   async execute(state: DocGenState): Promise<Partial<DocGenState>> {
-    const filesContext = state.inputFiles
-      .filter((f) => f.parseStatus === 'done')
-      .map((f) => `File: ${f.name}\nSummary: ${f.parseSummary ?? 'N/A'}\nText: ${(f.extractedText ?? '').slice(0, 2000)}`)
-      .join('\n\n---\n\n');
+    // M7: the ingest stage already aggregated parsed files into
+    // `ingestContext` (metadata + AI summary + extracted text). Use it when
+    // available so we don't re-read/re-summarize files; fall back to the old
+    // per-file map-reduce path for states persisted before ingest produced it.
+    // Either way, long contexts still go through map-reduce (R2) so token
+    // limits are respected.
+    let filesContextStr: string;
+    if (state.ingestContext && state.ingestContext.length > 0) {
+      filesContextStr = await summarizeLongText(state.ingestContext, {
+        provider: this.provider,
+        signal: this.config.signal,
+        onProgress: (msg) => this.config.onProgress?.(msg),
+      });
+    } else {
+      const filesContext: string[] = [];
+      for (const f of state.inputFiles.filter((f) => f.parseStatus === 'done')) {
+        const text = await summarizeLongText(f.extractedText ?? '', {
+          provider: this.provider,
+          signal: this.config.signal,
+          onProgress: (msg) => this.config.onProgress?.(msg),
+        });
+        filesContext.push(`File: ${f.name}\nSummary: ${f.parseSummary ?? 'N/A'}\nText: ${text}`);
+      }
+      filesContextStr = filesContext.join('\n\n---\n\n');
+    }
 
     const refContext =
       state.referenceSearchResults.length > 0
@@ -31,7 +53,7 @@ Respond ONLY with valid JSON array, no markdown fences.`;
             .join('\n')
         : '';
 
-    const prompt = `Analyze the following input documents:\n\n${filesContext}${refContext}\n\nProduce detailed analysis results for each input file.`;
+    const prompt = `Analyze the following input documents:\n\n${filesContextStr}${refContext}\n\nProduce detailed analysis results for each input file.`;
     const response = await this.callLLM(prompt);
     let analysisResults: AnalysisResult[];
     try {

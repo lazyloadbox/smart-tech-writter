@@ -36,6 +36,18 @@ function runMigrations(db: Database.Database): void {
       created_at   TEXT NOT NULL,
       updated_at   TEXT NOT NULL
     );
+
+    -- Semantic RAG index: one row per embedded text chunk.
+    CREATE TABLE IF NOT EXISTS rag_chunks (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_path   TEXT NOT NULL,
+      file_name   TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      content     TEXT NOT NULL,
+      embedding   TEXT NOT NULL,
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rag_chunks_file_path ON rag_chunks(file_path);
   `);
 }
 

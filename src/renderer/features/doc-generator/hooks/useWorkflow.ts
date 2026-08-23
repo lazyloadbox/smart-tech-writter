@@ -101,15 +101,25 @@ export function useWorkflow() {
     [store.projectId]
   );
 
+  const pause = useCallback(() => {
+    console.info('[WF][Renderer][Hook] pause called', { projectId: store.projectId });
+    return workflowApi.pause(store.projectId);
+  }, [store.projectId]);
+
+  const resume = useCallback(() => {
+    console.info('[WF][Renderer][Hook] resume called', { projectId: store.projectId });
+    return workflowApi.resume(store.projectId);
+  }, [store.projectId]);
+
   const submitHumanReview = useCallback(
-    (editedContent: string, acceptedIds: string[]) =>
-      workflowApi.submitHumanReview(store.projectId, editedContent, acceptedIds),
+    (editedDrafts: DocGenState['drafts'], acceptedIds: string[]) =>
+      workflowApi.submitHumanReview(store.projectId, editedDrafts, acceptedIds),
     [store.projectId]
   );
 
   const submitHumanConfirm = useCallback(
-    (approved: boolean, targetLanguage?: LocalizeLanguage, editedContent?: string, acceptedCommentIds?: string[], skipLocalization?: boolean) =>
-      workflowApi.submitHumanConfirm(store.projectId, approved, targetLanguage, editedContent, acceptedCommentIds, skipLocalization),
+    (approved: boolean, targetLanguage?: LocalizeLanguage, editedDrafts?: DocGenState['drafts'], acceptedCommentIds?: string[], skipLocalization?: boolean) =>
+      workflowApi.submitHumanConfirm(store.projectId, approved, targetLanguage, editedDrafts, acceptedCommentIds, skipLocalization),
     [store.projectId]
   );
 
@@ -148,6 +158,8 @@ export function useWorkflow() {
     state: store,
     startWorkflow,
     goBack,
+    pause,
+    resume,
     submitHumanReview,
     submitHumanConfirm,
     submitHumanLocalize,

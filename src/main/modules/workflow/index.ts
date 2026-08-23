@@ -2,36 +2,50 @@ import { BrowserWindow } from 'electron';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import log from 'electron-log';
-import type { DocGenState, StageName, WorkflowStatus } from '../../../shared/types/workflow.types';
-import type { UploadedFile } from '../../../shared/types/document.types';
+import { Command } from '@langchain/langgraph';
+import type { DocGenState, StageName, WorkflowStatus, WorkflowLogEntry } from '../../../shared/types/workflow.types';
 import type { AIProvider } from '../ai-providers/base.provider';
-import type { LocalSearchService } from '../rag/local-search.service';
+import type { DocumentSearchService } from '../rag/local-search.service';
 import { getDatabase } from '../storage/database';
-import { IPC_CHANNELS } from '../../../shared/types/ipc.types';
-import {
-  runUploadParseStage,
-  runIngestStage,
-  runAnalyzeStage,
-  runDraftStage,
-  runAiReviewStage,
-  runPostEditReviewStage,
-  runLocalizeStage,
-  runLocalizeAiReviewStage,
-  runDitaBuildStage,
-  runDitaAiReviewStage,
-  runExportStage,
-} from './pipeline';
-import { getStatusForStage, PAUSE_STAGES, nextStage, previousStage, getFieldsToResetAfterStage, STAGE_ORDER } from './state-machine';
+import { getStatusForStage, PAUSE_STAGES, STAGE_ORDER } from './state-machine';
+import { buildWorkflowGraph } from './langgraph/graph';
+import { getCheckpointer } from './langgraph/checkpointer';
+import { WorkflowEmitterImpl } from './langgraph/emitter';
+import type { WorkflowGraphState } from './langgraph/graph-state';
 
+/**
+ * WorkflowEngine — LangGraph-backed facade.
+ *
+ * The public API (startWorkflow / resumeFromHumanInput / goBackToStage /
+ * getState / aiEditDraft / updateProvider) is unchanged from the legacy
+ * sequential engine, so the IPC layer and renderer are untouched.
+ *
+ * Execution is delegated to a compiled LangGraph StateGraph (20 stages /
+ * 9 interrupt pause points). State persists in a SqliteSaver checkpointer
+ * (thread_id = projectId); go-back uses checkpoint replay (time travel).
+ *
+ * A synchronous state cache + a state_json mirror in the projects table keep
+ * getState() synchronous (the IPC handlers call it without await) and let
+ * states survive app restarts.
+ */
 export class WorkflowEngine {
-  private states = new Map<string, DocGenState>();
-  private pendingResume = new Map<string, (data: unknown) => void>();
+  private provider: AIProvider;
+  private ragService: DocumentSearchService;
+  private graph: ReturnType<typeof buildWorkflowGraph>;
+  /** Synchronous state cache backing getState() (kept fresh by emitter + hydrate). */
+  private stateCache = new Map<string, DocGenState>();
+  /** Accumulated workflow logs per project. */
+  private logs = new Map<string, WorkflowLogEntry[]>();
+  /** Projects with an in-flight graph invoke. */
+  private running = new Set<string>();
+  /** AbortControllers for in-flight invokes (used by go-back / pause during RUNNING). */
+  private abortControllers = new Map<string, AbortController>();
 
-  constructor(
-    private provider: AIProvider,
-    private ragService: LocalSearchService,
-    private window: BrowserWindow
-  ) {}
+  constructor(provider: AIProvider, ragService: DocumentSearchService) {
+    this.provider = provider;
+    this.ragService = ragService;
+    this.graph = buildWorkflowGraph();
+  }
 
   updateProvider(provider: AIProvider): void {
     this.provider = provider;
@@ -60,21 +74,24 @@ export class WorkflowEngine {
       drafts: [],
       aiReviewComments: [],
       humanEdits: '',
+      humanEditedDrafts: [],
       postEditReviewComments: [],
       localizedDrafts: [],
       localizeReviewComments: [],
       ditaDocuments: [],
       ditaReviewComments: [],
       outputDocuments: [],
+      ingestContext: '',
       targetLanguage: 'zh-CN',
       skipLocalization: false,
       workflowLogs: [],
       currentStage: 'upload_parse',
       status: 'RUNNING',
-      pipelineRunId: 1,
+      pipelineRunId: 0,
     };
-    this.states.set(projectId, state);
-    this.persistState(state);
+    this.stateCache.set(projectId, state);
+    this.logs.set(projectId, []);
+    this.persistMirror(state);
     log.info('[WF][Engine] Initial state persisted', {
       projectId,
       stage: state.currentStage,
@@ -82,28 +99,41 @@ export class WorkflowEngine {
       inputFileCount: state.inputFiles.length,
     });
 
-    // Run workflow asynchronously
-    this.runPipeline(state).catch((err) => {
-      log.error('Workflow error:', err);
-      const s = this.states.get(projectId);
-      if (s) {
-        const errState = { ...s, status: 'FAILED' as WorkflowStatus, error: String(err) };
-        this.states.set(projectId, errState);
-        this.persistState(errState);
-        this.emitProgress(errState, 'Workflow failed: ' + String(err));
-      }
-    });
+    // Run the graph asynchronously (fire-and-forget).
+    void this.runInvoke(projectId, state, { start: true });
 
     return state;
   }
 
   /**
-   * Go back to a previous stage and re-execute from there.
-   * Resets state fields produced by stages after the target stage.
+   * Resume a paused graph with human input. Fire-and-forget — matches the
+   * legacy engine's synchronous resolve semantics (IPC handlers don't await).
+   */
+  resumeFromHumanInput(projectId: string, data: unknown): void {
+    log.info('[WF][Engine] resumeFromHumanInput called', { projectId, hasData: !!data });
+    void this.doResume(projectId, data);
+  }
+
+  private async doResume(projectId: string, data: unknown): Promise<void> {
+    if (this.running.has(projectId)) {
+      log.warn('[WF][Engine] resumeFromHumanInput ignored: invoke in flight', { projectId });
+      return;
+    }
+    const gs = await this.graph.getState({ configurable: { thread_id: projectId } });
+    if (!gs?.next?.length) {
+      log.warn('[WF][Engine] resumeFromHumanInput ignored: graph not paused', { projectId });
+      return;
+    }
+    await this.runInvoke(projectId, data, { resume: data });
+  }
+
+  /**
+   * Go back to a previous stage via checkpoint replay (time travel).
+   * Aborts any in-flight invoke first so a stale run can't clobber the replay.
    */
   async goBackToStage(projectId: string, targetStage: StageName): Promise<void> {
     log.info('[WF][Engine] goBackToStage requested', { projectId, targetStage });
-    const state = this.states.get(projectId);
+    const state = this.getState(projectId);
     if (!state) {
       log.warn('[WF][Engine] goBackToStage: project not found', { projectId });
       return;
@@ -119,275 +149,132 @@ export class WorkflowEngine {
       return;
     }
 
-    // Clear pending resume if any (we're abandoning the current pause)
-    this.pendingResume.delete(projectId);
-
-    // Bump pipelineRunId so any still-in-flight stage runners from the old
-    // pipeline will discard their results when they eventually complete.
-    const newRunId = (state.pipelineRunId ?? 0) + 1;
-    log.info('[WF][Engine] goBackToStage bumping pipelineRunId', {
-      projectId, oldRunId: state.pipelineRunId, newRunId,
-    });
-
-    // Get default empty values for fields to reset
-    const fieldsToReset = getFieldsToResetAfterStage(targetStage);
-    const humanReviewIdx = STAGE_ORDER.indexOf('human_review');
-    const resetPatch: Record<string, unknown> = {
-      currentStage: targetStage,
-      status: 'RUNNING' as WorkflowStatus,
-      error: undefined,
-      pipelineRunId: newRunId,
-    };
-
-    // Clear humanEdits when going back to human_review or before,
-    // so the draft shows the original content (not a previously accepted version).
-    if (targetIdx <= humanReviewIdx) {
-      resetPatch.humanEdits = '';
-    }
-
-    // Reset fields produced by stages after target
-    for (const field of fieldsToReset) {
-      if (field === 'inputFiles') {
-        // Reset parse status for files back to pending
-        resetPatch.inputFiles = state.inputFiles.map((f: UploadedFile): UploadedFile => ({
-          ...f,
-          parseStatus: 'pending',
-          parseError: undefined,
-          parseSummary: undefined,
-          extractedText: undefined,
-        }));
-      } else {
-        resetPatch[field] = [];
+    // Abort any in-flight invoke (go-back during RUNNING) and wait for settle.
+    const ac = this.abortControllers.get(projectId);
+    if (ac) {
+      log.info('[WF][Engine] goBackToStage aborting in-flight invoke', { projectId });
+      ac.abort();
+      let waited = 0;
+      while (this.running.has(projectId) && waited < 10000) {
+        await new Promise((r) => setTimeout(r, 25));
+        waited += 25;
       }
     }
 
-    const updatedState = { ...state, ...resetPatch } as DocGenState;
-    this.states.set(projectId, updatedState);
-    this.persistState(updatedState);
-    this.emitProgress(updatedState, `↩ 回退到阶段: ${targetStage}`);
-
-    // Re-run pipeline from target stage
-    this.runPipeline(updatedState, targetStage).catch((err) => {
-      log.error('Workflow error after goBack:', err);
-      const s = this.states.get(projectId);
-      if (s) {
-        const errState = { ...s, status: 'FAILED' as WorkflowStatus, error: String(err) };
-        this.states.set(projectId, errState);
-        this.persistState(errState);
-        this.emitProgress(errState, 'Workflow failed: ' + String(err));
-      }
-    });
-  }
-
-  private async runPipeline(state: DocGenState, startStage?: StageName): Promise<void> {
-    const runId = state.pipelineRunId ?? 0;
-    log.info('[WF][Engine] Pipeline started', { projectId: state.projectId, startStage: startStage ?? 'upload_parse', runId });
-
-    // Helper: returns true if this pipeline run is still the active one.
-    // If another pipeline was started (e.g. via goBack), this run's results are stale.
-    const isActiveRun = (): boolean => {
-      const current = this.states.get(state.projectId);
-      return (current?.pipelineRunId ?? 0) === runId;
-    };
-
-    const config = {
-      provider: this.provider,
-      ragService: this.ragService,
-      onProgress: (stage: StageName, message: string, data?: unknown) => {
-        if (!isActiveRun()) return;
-        const s = this.states.get(state.projectId);
-        if (s) this.emitProgress({ ...s, currentStage: stage }, message, data);
-      },
-      onStream: (stage: StageName, chunk: string) => {
-        if (!isActiveRun()) return;
-        this.emitStream(state.projectId, stage, chunk);
-      },
-    };
-
-    const stageRunners: Partial<Record<StageName, (s: DocGenState) => Promise<Partial<DocGenState>>>> = {
-      upload_parse: (s) => runUploadParseStage(s, config),
-      ingest: (s) => runIngestStage(s, config),
-      analyze: (s) => runAnalyzeStage(s, config),
-      draft: (s) => runDraftStage(s, config),
-      ai_review: (s) => runAiReviewStage(s, config),
-      post_edit_review: (s) => runPostEditReviewStage(s, config),
-      localize: (s) => runLocalizeStage(s, config),
-      localize_ai_review: (s) => runLocalizeAiReviewStage(s, config),
-      dita_build: (s) => runDitaBuildStage(s, config),
-      dita_ai_review: (s) => runDitaAiReviewStage(s, config),
-      export: (s) => runExportStage(s, config),
-    };
-
-    let current: StageName = startStage ?? 'upload_parse';
-
-    while (current) {
-      // Abort entire loop if this pipeline run has been superseded
-      if (!isActiveRun()) {
-        log.info('[WF][Engine] Pipeline aborted (stale run)', { projectId: state.projectId, runId, stage: current });
-        return;
-      }
-
-      let s = this.states.get(state.projectId)!;
-      s = { ...s, currentStage: current, status: 'RUNNING' };
-      this.states.set(state.projectId, s);
-      this.persistState(s);
-      log.info('[WF][Engine] Enter stage', {
-        projectId: state.projectId,
-        stage: current,
-        status: s.status,
-        runId,
-      });
-
-      if (PAUSE_STAGES.has(current)) {
-        // Interrupt: pause and wait for human input
-        const pauseStatus = getStatusForStage(current);
-        s = { ...s, status: pauseStatus };
-        this.states.set(state.projectId, s);
-        this.persistState(s);
-        this.emitProgress(s, `Waiting for human input at stage: ${current}`);
-        log.info('[WF][Engine] Stage paused for human input', {
-          projectId: state.projectId,
-          stage: current,
-          status: pauseStatus,
-        });
-
-        // Wait for resume signal
-        await new Promise<void>((resolve) => {
-          this.pendingResume.set(state.projectId, (data: unknown) => {
-            // Discard if another pipeline run was started while we waited
-            if (!isActiveRun()) {
-              log.info('[WF][Engine] Pause resume discarded (stale run)', {
-                projectId: state.projectId, runId, stage: current,
-              });
-              resolve();
-              return;
-            }
-            log.info('[WF][Engine] Resume signal received', {
-              projectId: state.projectId,
-              stage: current,
-              hasData: !!data,
-            });
-            // Apply human edits to state before continuing
-            if (data && typeof data === 'object') {
-              const updated = this.states.get(state.projectId)!;
-              this.states.set(state.projectId, { ...updated, ...(data as Partial<DocGenState>) });
-            }
-            resolve();
-          });
-        });
-      } else {
-        const runner = stageRunners[current];
-        if (runner) {
-          log.info('[WF][Engine] Running stage runner', { projectId: state.projectId, stage: current });
-          // If humanEdits is present, pass effective drafts to the stage.
-          // We do NOT persist this change to the stored state so that
-          // going-back to human_review still shows the original draft.
-          const effectiveS = s.humanEdits
-            ? { ...s, drafts: s.drafts.map((d) => ({ ...d, content: s.humanEdits, updatedAt: new Date().toISOString() })) }
-            : s;
-          const updates = await runner(effectiveS);
-
-          // Discard results if another pipeline run was started while we waited
-          if (!isActiveRun()) {
-            log.info('[WF][Engine] Stage runner result discarded (stale run)', {
-              projectId: state.projectId, runId, stage: current,
-            });
-            return;
-          }
-
-          const updated = { ...this.states.get(state.projectId)!, ...updates };
-          this.states.set(state.projectId, updated);
-          this.persistState(updated);
-          this.emitProgress(updated, `Completed stage: ${current}`);
-          log.info('[WF][Engine] Stage runner completed', {
-            projectId: state.projectId,
-            stage: current,
-            nextStatus: updated.status,
-          });
-        } else {
-          log.warn('[WF][Engine] No stage runner found; skipping stage', { projectId: state.projectId, stage: current });
-        }
-      }
-
-      const next = nextStage(current);
-      if (!next) break;
-
-      // Stage 6b skip-localization: when the user chose to skip localization,
-      // jump straight from human_confirm to dita_build, bypassing the four
-      // localize stages (localize / review_localize / localize_ai_review /
-      // human_localize_review). dita_build already falls back to the original
-      // English drafts when localizedDrafts is empty.
-      if (current === 'human_confirm') {
-        const sAfter = this.states.get(state.projectId);
-        if (sAfter?.skipLocalization && next === 'localize') {
-          log.info('[WF][Engine] Skipping localization stages (user opted out)', {
-            projectId: state.projectId, runId, from: current, to: 'dita_build',
-          });
-          current = 'dita_build';
-          log.info('[WF][Engine] Stage transition', { projectId: state.projectId, from: current, to: 'dita_build' });
-          continue;
-        }
-      }
-
-      log.info('[WF][Engine] Stage transition', { projectId: state.projectId, from: current, to: next });
-      current = next;
+    // Find the checkpoint whose pending node is the target stage.
+    const threadConfig = { configurable: { thread_id: projectId } };
+    const history: Array<{ checkpoint_id?: string; next?: string[] }> = [];
+    for await (const c of this.graph.getStateHistory(threadConfig)) {
+      history.push({ checkpoint_id: c.config?.configurable?.checkpoint_id, next: c.next as string[] | undefined });
     }
-
-    const finalState = this.states.get(state.projectId);
-    log.info('[WF][Engine] Pipeline finished', {
-      projectId: state.projectId,
-      finalStage: finalState?.currentStage,
-      finalStatus: finalState?.status,
-    });
-  }
-
-  resumeFromHumanInput(projectId: string, data: unknown): void {
-    log.info('[WF][Engine] resumeFromHumanInput called', {
-      projectId,
-      hasPendingResume: this.pendingResume.has(projectId),
-      hasData: !!data,
-    });
-    const resolve = this.pendingResume.get(projectId);
-    if (resolve) {
-      this.pendingResume.delete(projectId);
-      resolve(data);
+    const target = history.find((c) => c.next?.includes(targetStage));
+    if (!target?.checkpoint_id) {
+      log.warn('[WF][Engine] goBackToStage: no checkpoint found for target', { projectId, targetStage });
       return;
     }
-    log.warn('[WF][Engine] resumeFromHumanInput ignored: no pending waiter', { projectId });
+    log.info('[WF][Engine] goBackToStage replaying', { projectId, targetStage, checkpointId: target.checkpoint_id });
+
+    const emitter = this.makeEmitter(projectId);
+    emitter.setStatus('RUNNING');
+    emitter.emitProgress(targetStage, `↩ 回退到阶段: ${targetStage}`);
+    const config = {
+      configurable: {
+        thread_id: projectId,
+        checkpoint_id: target.checkpoint_id,
+        provider: this.provider,
+        ragService: this.ragService,
+        emitter,
+      },
+    };
+    this.running.add(projectId);
+    try {
+      await this.graph.invoke(null, config);
+      await this.hydrate(projectId);
+    } catch (err) {
+      log.error('[WF][Engine] goBackToStage replay failed:', err);
+      const s = this.stateCache.get(projectId);
+      if (s) {
+        const errState = { ...s, status: 'FAILED' as WorkflowStatus, error: String(err) };
+        this.stateCache.set(projectId, errState);
+        this.persistMirror(errState);
+      }
+    } finally {
+      this.running.delete(projectId);
+    }
   }
 
   getState(projectId: string): DocGenState | null {
-    return this.states.get(projectId) ?? this.loadState(projectId);
+    return this.stateCache.get(projectId) ?? this.loadMirror(projectId);
   }
 
-  private persistState(state: DocGenState): void {
+  /**
+   * User-initiated pause (M3): aborts any in-flight graph invoke so the
+   * current LLM call is cancelled (via the AbortSignal threaded through the
+   * provider) and marks the project as PAUSED:USER. The graph checkpoint is
+   * left at the last completed node, so resumeWorkflow() can continue from it.
+   */
+  async pauseWorkflow(projectId: string): Promise<void> {
+    const state = this.getState(projectId);
+    if (!state) {
+      log.warn('[WF][Engine] pauseWorkflow: project not found', { projectId });
+      return;
+    }
+    if (state.status !== 'RUNNING') {
+      log.info('[WF][Engine] pauseWorkflow ignored: not running', { projectId, status: state.status });
+      return;
+    }
+    log.info('[WF][Engine] pauseWorkflow aborting in-flight invoke', { projectId });
+    const ac = this.abortControllers.get(projectId);
+    if (ac) ac.abort();
+    let waited = 0;
+    while (this.running.has(projectId) && waited < 10000) {
+      await new Promise((r) => setTimeout(r, 25));
+      waited += 25;
+    }
+    const s = this.stateCache.get(projectId) ?? state;
+    const paused = { ...s, status: 'PAUSED:USER' as WorkflowStatus };
+    this.stateCache.set(projectId, paused);
+    this.persistMirror(paused);
+    log.info('[WF][Engine] pauseWorkflow applied', { projectId, stage: paused.currentStage });
+  }
+
+  /**
+   * Resume a user-paused workflow (M3): continues the graph from the last
+   * checkpoint, re-running the node that was interrupted by the pause.
+   */
+  async resumeWorkflow(projectId: string): Promise<void> {
+    const state = this.getState(projectId);
+    if (!state || state.status !== 'PAUSED:USER') {
+      log.info('[WF][Engine] resumeWorkflow ignored: not user-paused', { projectId, status: state?.status });
+      return;
+    }
+    log.info('[WF][Engine] resumeWorkflow continuing from checkpoint', { projectId });
+    await this.runInvoke(projectId, null, { continue: true });
+  }
+
+  /**
+   * Delete a project: clears in-memory state and removes the LangGraph
+   * checkpoint thread so its checkpoints don't accumulate in langgraph.db.
+   */
+  async deleteProject(projectId: string): Promise<void> {
+    log.info('[WF][Engine] deleteProject requested', { projectId });
+    const ac = this.abortControllers.get(projectId);
+    if (ac) ac.abort();
+    this.running.delete(projectId);
+    this.abortControllers.delete(projectId);
+    this.stateCache.delete(projectId);
+    this.logs.delete(projectId);
     try {
-      const db = getDatabase();
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT OR REPLACE INTO projects (id, name, status, current_stage, state_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?)
-      `).run(
-        state.projectId,
-        `Project ${state.projectId.slice(0, 8)}`,
-        state.status,
-        state.currentStage,
-        JSON.stringify(state),
-        state.projectId,
-        now,
-        now
-      );
+      await getCheckpointer().deleteThread(projectId);
+      log.info('[WF][Engine] deleteProject: checkpoint thread removed', { projectId });
     } catch (err) {
-      log.error('Failed to persist state:', err);
+      log.error('[WF][Engine] deleteProject: deleteThread failed', { projectId, error: String(err) });
     }
   }
 
   /**
-   * AI-assisted draft editing (Stage 3a review_draft).
-   * Sends the current draft + a user instruction to the AI, which returns
-   * the edited Markdown. Streams chunks to the renderer via emitStream so
-   * the user sees live progress. Does NOT mutate workflow state — the
-   * caller decides whether to keep the result.
+   * AI-assisted draft editing (Stage 3a review_draft). Unchanged from the
+   * legacy engine — streams via the provider directly.
    */
   async aiEditDraft(projectId: string, currentContent: string, instruction: string): Promise<string> {
     log.info('[WF][Engine] aiEditDraft requested', { projectId, instructionLen: instruction.length, contentLen: currentContent.length });
@@ -412,7 +299,128 @@ Keep all unchanged sections intact. Maintain the same language (English) unless 
     return full;
   }
 
-  private loadState(projectId: string): DocGenState | null {
+  // --- internals ---
+
+  private makeEmitter(projectId: string): WorkflowEmitterImpl {
+    return new WorkflowEmitterImpl(projectId, (entry, status) => {
+      const logs = this.logs.get(projectId) ?? [];
+      logs.push(entry);
+      this.logs.set(projectId, logs);
+      // Keep the sync cache fresh during running invokes so getState() returns
+      // the current stage/status (the renderer fetches full state on stage change).
+      const cached = this.stateCache.get(projectId);
+      if (cached) {
+        this.stateCache.set(projectId, { ...cached, currentStage: entry.stage, status });
+      }
+    });
+  }
+
+  private async runInvoke(projectId: string, input: unknown, opts: { start?: boolean; resume?: unknown; continue?: boolean }): Promise<void> {
+    if (this.running.has(projectId)) {
+      log.warn('[WF][Engine] runInvoke skipped: already running', { projectId });
+      return;
+    }
+    this.running.add(projectId);
+    const ac = new AbortController();
+    this.abortControllers.set(projectId, ac);
+    const emitter = this.makeEmitter(projectId);
+    const config = {
+      configurable: {
+        thread_id: projectId,
+        provider: this.provider,
+        ragService: this.ragService,
+        emitter,
+      },
+      signal: ac.signal,
+    };
+    try {
+      if (opts.start) {
+        // Strip facade-owned fields not in the graph state schema.
+        const graphInput = { ...(input as DocGenState) };
+        delete (graphInput as Record<string, unknown>).workflowLogs;
+        delete (graphInput as Record<string, unknown>).error;
+        delete (graphInput as Record<string, unknown>).pipelineRunId;
+        await this.graph.invoke(graphInput, config);
+      } else if (opts.continue) {
+        // Continue from the last checkpoint (used after a user pause).
+        await this.graph.invoke(null, config);
+      } else {
+        await this.graph.invoke(new Command({ resume: opts.resume }), config);
+      }
+      await this.hydrate(projectId);
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') {
+        log.info('[WF][Engine] Invoke aborted', { projectId });
+        emitter.setActive(false);
+      } else {
+        log.error('[WF][Engine] Workflow error:', err);
+        const s = this.stateCache.get(projectId);
+        if (s) {
+          const errState = { ...s, status: 'FAILED' as WorkflowStatus, error: String(err) };
+          this.stateCache.set(projectId, errState);
+          this.persistMirror(errState);
+          emitter.setStatus('FAILED');
+          emitter.emitProgress(s.currentStage, 'Workflow failed: ' + String(err));
+        }
+      }
+    } finally {
+      this.running.delete(projectId);
+      this.abortControllers.delete(projectId);
+    }
+  }
+
+  /** Read the latest graph checkpoint into the sync cache + mirror. */
+  private async hydrate(projectId: string): Promise<void> {
+    const threadConfig = { configurable: { thread_id: projectId } };
+    const gs = await this.graph.getState(threadConfig);
+    if (!gs?.values || Object.keys(gs.values).length === 0) return;
+    const values = gs.values as WorkflowGraphState;
+    let status = values.status;
+    let currentStage = values.currentStage;
+    // When interrupted at a pause node, surface the pause stage + PAUSED status
+    // (the checkpoint itself holds the pre-pause stage with status RUNNING).
+    if (gs.next?.length === 1 && PAUSE_STAGES.has(gs.next[0] as StageName)) {
+      status = getStatusForStage(gs.next[0] as StageName);
+      currentStage = gs.next[0] as StageName;
+    }
+    const state: DocGenState = {
+      ...values,
+      workflowLogs: this.logs.get(projectId) ?? [],
+      status,
+      currentStage,
+      error: undefined,
+      pipelineRunId: 0,
+    };
+    this.stateCache.set(projectId, state);
+    this.persistMirror(state);
+    log.info('[WF][Engine] State hydrated', { projectId, stage: currentStage, status });
+  }
+
+  /** Write a sync-readable mirror of the state to the projects table. */
+  private persistMirror(state: DocGenState): void {
+    try {
+      const db = getDatabase();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR REPLACE INTO projects (id, name, status, current_stage, state_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?)
+      `).run(
+        state.projectId,
+        `Project ${state.projectId.slice(0, 8)}`,
+        state.status,
+        state.currentStage,
+        JSON.stringify(state),
+        state.projectId,
+        now,
+        now
+      );
+    } catch (err) {
+      log.error('Failed to persist state:', err);
+    }
+  }
+
+  /** Load a previously persisted mirror (used by getState after restart). */
+  private loadMirror(projectId: string): DocGenState | null {
     try {
       const db = getDatabase();
       const row = db.prepare('SELECT state_json FROM projects WHERE id = ?').get(projectId) as
@@ -423,58 +431,24 @@ Keep all unchanged sections intact. Maintain the same language (English) unless 
       // Backfill fields added after initial release so old persisted states
       // don't break the pipeline (skipLocalization defaults to false).
       if (typeof state.skipLocalization !== 'boolean') state.skipLocalization = false;
-      this.states.set(projectId, state);
+      if (!Array.isArray(state.humanEditedDrafts)) state.humanEditedDrafts = [];
+      if (typeof state.ingestContext !== 'string') state.ingestContext = '';
+      this.stateCache.set(projectId, state);
       return state;
     } catch {
       return null;
     }
   }
 
-  private emitProgress(state: DocGenState, message: string, data?: unknown): void {
-    const logEntry = {
-      id: uuidv4(),
-      timestamp: new Date().toISOString(),
-      stage: state.currentStage,
-      level: 'info' as const,
-      message,
-      detail: data ? JSON.stringify(data).slice(0, 500) : undefined,
-    };
-
-    log.info('[WF][Progress]', {
-      projectId: state.projectId,
-      stage: state.currentStage,
-      status: state.status,
-      message,
-    });
-
-    // Append log entry to state
-    const s = this.states.get(state.projectId);
-    if (s) {
-      this.states.set(state.projectId, {
-        ...s,
-        workflowLogs: [...s.workflowLogs, logEntry],
-      });
-    }
-
-    if (this.window?.webContents && !this.window.webContents.isDestroyed()) {
-      this.window.webContents.send(IPC_CHANNELS.WORKFLOW_PROGRESS, {
-        projectId: state.projectId,
-        stage: state.currentStage,
-        status: state.status,
-        message,
-        data,
-        logEntries: [logEntry],
-      });
-    }
-  }
-
   private emitStream(projectId: string, stage: StageName, chunk: string): void {
-    if (this.window?.webContents && !this.window.webContents.isDestroyed()) {
-      this.window.webContents.send(IPC_CHANNELS.WORKFLOW_STREAM, {
-        projectId,
-        stage,
-        chunk,
-      });
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send('workflow:stream', {
+          projectId,
+          stage,
+          chunk,
+        });
+      }
     }
   }
 }

@@ -93,3 +93,14 @@ out/
 
 # Project local files
 local.md
+
+# Build output (Vite renderer)
+/dist/
+
+# LangGraph spike runtime artifacts (SQLite checkpoints)
+scripts/*.db
+scripts/*.db-shm
+scripts/*.db-wal
+
+# Test build output
+test/langgraph/dist/

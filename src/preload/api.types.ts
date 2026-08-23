@@ -42,12 +42,15 @@ export interface ElectronAPI {
     readFile(filePath: string): Promise<string>;
     showInFolder(filePath: string): Promise<void>;
     downloadZip(projectId: string): Promise<void>;
-    saveDita(filePath: string, fileName: string): Promise<string | null>;
+    saveDita(filePath: string, fileName: string, format?: string): Promise<string | null>;
     exportAll(projectId: string): Promise<string | null>;
   };
   rag: {
     query(query: string): Promise<SearchResult[]>;
-    addDocument(filePath: string): Promise<void>;
+    addDocument(filePath: string): Promise<{ success: boolean; indexedChunks: number; error?: string }>;
+    removeDocument(filePath: string): Promise<{ success: boolean }>;
+    clearIndex(): Promise<{ success: boolean }>;
+    indexStats(): Promise<{ indexedChunks: number }>;
   };
   settings: {
     get(key: string): Promise<string | number | boolean | null>;

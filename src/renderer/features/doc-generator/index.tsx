@@ -20,7 +20,7 @@ const LANG_OPTIONS: { value: LocalizeLanguage; label: string }[] = [
 ];
 
 export const DocGeneratorTab: React.FC = () => {
-  const { state, startWorkflow, goBack, submitHumanReview, submitHumanConfirm, submitHumanLocalize, submitHumanDita, reviewContinue, setTargetLanguage } = useWorkflow();
+  const { state, startWorkflow, goBack, pause, resume, submitHumanReview, submitHumanConfirm, submitHumanLocalize, submitHumanDita, reviewContinue, setTargetLanguage } = useWorkflow();
   const [isStarting, setIsStarting] = useState(false);
   const [localFiles, setLocalFiles] = useState<UploadedFile[]>([]);
   const [selectedLang, setSelectedLang] = useState<LocalizeLanguage>('zh-CN');
@@ -128,6 +128,14 @@ export const DocGeneratorTab: React.FC = () => {
                 ↩ 返回上一步
               </button>
             )}
+            {/* Pause button — cancels the in-flight AI call (M3) */}
+            <button
+              onClick={() => pause()}
+              className="shrink-0 px-3 py-1.5 bg-yellow-700 hover:bg-yellow-600 text-gray-100 text-xs rounded transition-colors"
+              title="暂停当前 AI 调用，可从断点继续"
+            >
+              ⏸ 暂停
+            </button>
           </div>
 
           {/* Live progress detail (e.g. current file being processed) */}
@@ -258,6 +266,53 @@ export const DocGeneratorTab: React.FC = () => {
       );
     }
 
+    // ─── User-paused (M3): in-flight workflow paused by the user ───
+    if (status === 'PAUSED:USER') {
+      return (
+        <div className="flex flex-col h-full overflow-hidden">
+          <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-gray-200">⏸ 工作流已暂停</h2>
+            <div className="flex-1" />
+            <span className="text-xs text-gray-400">当前阶段: {currentStage}</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="p-4 bg-yellow-900/20 border border-yellow-700/50 rounded">
+              <p className="text-sm text-yellow-300">已取消进行中的 AI 调用，工作流停在断点处。</p>
+              <p className="text-xs text-gray-400 mt-1">
+                点击「继续」将从上次完成的阶段继续执行；也可以返回上一步重新开始。
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => resume()}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors"
+              >
+                ▶ 继续执行
+              </button>
+              {currentStage !== 'upload_parse' && (
+                <button
+                  onClick={() => {
+                    const stages: StageName[] = [
+                      'upload_parse', 'review_upload', 'ingest', 'analyze', 'review_analyze',
+                      'draft', 'review_draft', 'ai_review',
+                      'human_review', 'post_edit_review', 'human_confirm',
+                      'localize', 'review_localize', 'localize_ai_review', 'human_localize_review',
+                      'dita_build', 'review_dita', 'dita_ai_review', 'human_dita_review', 'export',
+                    ];
+                    const idx = stages.indexOf(currentStage);
+                    if (idx > 0) handleGoBack(stages[idx - 1]);
+                  }}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors"
+                >
+                  ↩ 返回上一步
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ─── Review: Upload & Parse (after upload_parse, before ingest) ───
     if (status === 'PAUSED:REVIEW_UPLOAD') {
       const doneFiles = state.inputFiles.filter((f) => f.parseStatus === 'done');
@@ -271,6 +326,11 @@ export const DocGeneratorTab: React.FC = () => {
             <span className="text-xs text-gray-400">✅ {doneFiles.length} 个成功</span>
             {errorFiles.length > 0 && <span className="text-xs text-red-400">❌ {errorFiles.length} 个失败</span>}
             {pendingFiles.length > 0 && <span className="text-xs text-yellow-400">⏳ {pendingFiles.length} 个未完成</span>}
+          </div>
+          <div className="px-4 py-1.5 bg-blue-900/20 border-b border-blue-800/50 shrink-0">
+            <p className="text-xs text-blue-300">
+              💡 将综合 {state.inputFiles.length} 个文件的内容，汇总生成 <span className="font-semibold text-blue-200">一份</span> 综合技术文档。
+            </p>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {state.inputFiles.map((f) => (
@@ -425,7 +485,15 @@ export const DocGeneratorTab: React.FC = () => {
             {/* Original */}
             <div className="flex-1 border-r border-gray-700 overflow-y-auto p-4">
               <p className="text-xs text-gray-400 mb-2 font-semibold">📄 原文（只读）</p>
-              <MarkdownRenderer content={state.drafts[0]?.content ?? ''} />
+              {state.drafts.length === 0 && (
+                <p className="text-xs text-gray-500 text-center py-4">暂无原文</p>
+              )}
+              {state.drafts.map((d) => (
+                <div key={d.id} className="mb-4">
+                  <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
+                  <MarkdownRenderer content={d.content} />
+                </div>
+              ))}
             </div>
             {/* Localized */}
             <div className="flex-1 overflow-y-auto p-4">
@@ -482,9 +550,13 @@ export const DocGeneratorTab: React.FC = () => {
 
     // Human Confirm (Stage 6b) — with language selection
     if (status === 'PAUSED:HUMAN_CONFIRM') {
-      const confirmDrafts = state.humanEdits
-        ? state.drafts.map((d, i) => i === 0 ? { ...d, content: state.humanEdits } : d)
-        : state.drafts;
+      // Multi-draft (M1): prefer per-draft human edits; fall back to the
+      // legacy single-string humanEdits applied to drafts[0].
+      const confirmDrafts = state.humanEditedDrafts?.length
+        ? state.humanEditedDrafts
+        : state.humanEdits
+          ? state.drafts.map((d, i) => i === 0 ? { ...d, content: state.humanEdits } : d)
+          : state.drafts;
 
       const langFooter = (
         <div className="flex items-center gap-3 flex-wrap">
@@ -542,8 +614,8 @@ export const DocGeneratorTab: React.FC = () => {
             <ReviewPanel
               drafts={confirmDrafts}
               comments={state.postEditReviewComments}
-              onSubmit={(editedContent, acceptedIds) =>
-                submitHumanConfirm(true, selectedLang, editedContent, acceptedIds, skipLocalize)
+              onSubmit={(editedDrafts, acceptedIds) =>
+                submitHumanConfirm(true, selectedLang, editedDrafts, acceptedIds, skipLocalize)
               }
               title="Stage 6b — AI 审查建议（可接受/撤销）& 草稿编辑"
               submitLabel={
@@ -576,17 +648,22 @@ export const DocGeneratorTab: React.FC = () => {
             {/* Original */}
             <div className="flex-1 border-r border-gray-700 overflow-y-auto p-4">
               <p className="text-xs text-gray-400 mb-2 font-semibold">📄 原文（只读）</p>
-              <MarkdownRenderer content={state.drafts[0]?.content ?? ''} />
+              {state.drafts.length === 0 && (
+                <p className="text-xs text-gray-500 text-center py-4">暂无原文</p>
+              )}
+              {state.drafts.map((d) => (
+                <div key={d.id} className="mb-4">
+                  <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
+                  <MarkdownRenderer content={d.content} />
+                </div>
+              ))}
             </div>
             {/* Localized + Review */}
             <ReviewPanel
               drafts={state.localizedDrafts}
               comments={state.localizeReviewComments}
-              onSubmit={(content, accepted) =>
-                submitHumanLocalize(
-                  state.localizedDrafts.map((d: import('../../../shared/types/document.types').DocumentDraft, i: number) => i === 0 ? { ...d, content } : d),
-                  accepted
-                )
+              onSubmit={(editedDrafts, accepted) =>
+                submitHumanLocalize(editedDrafts, accepted)
               }
               title="本地化结果（可编辑）"
               submitLabel="确认完成，进入 DITA 生成 ▶"
@@ -650,11 +727,8 @@ export const DocGeneratorTab: React.FC = () => {
             <ReviewPanel
               drafts={state.ditaDocuments}
               comments={state.ditaReviewComments}
-              onSubmit={(content, accepted) =>
-                submitHumanDita(
-                  state.ditaDocuments.map((d: import('../../../shared/types/document.types').DocumentDraft, i: number) => i === 0 ? { ...d, content } : d),
-                  accepted
-                )
+              onSubmit={(editedDrafts, accepted) =>
+                submitHumanDita(editedDrafts, accepted)
               }
               title="DITA XML（可编辑）"
               submitLabel="确认完成，导出 DITA 文件 ▶"

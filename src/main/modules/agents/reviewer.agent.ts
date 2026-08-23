@@ -2,7 +2,7 @@ import { BaseAgent } from './base.agent';
 import type { AIProvider } from '../ai-providers/base.provider';
 import type { AgentConfig } from './base.agent';
 import type { DocGenState } from '../../../shared/types/workflow.types';
-import type { ReviewComment } from '../../../shared/types/document.types';
+import type { ReviewComment, DocumentDraft } from '../../../shared/types/document.types';
 import { v4 as uuidv4 } from 'uuid';
 
 export type ReviewMode = 'ai_review' | 'post_edit_review' | 'localize_ai_review' | 'dita_ai_review';
@@ -30,6 +30,53 @@ function extractJsonArray(response: string): string {
   }
 
   return text;
+}
+
+const VALID_TYPES = new Set<ReviewComment['type']>(['suggestion', 'error', 'warning', 'info']);
+
+/**
+ * Normalize a parsed AI response into ReviewComment[].
+ * - Coerces each item's type to the known set.
+ * - Resolves bogus/placeholder `draftId`s (M6): if the AI returns a draftId
+ *   that doesn't match any known draft, remap it to the draft whose content
+ *   contains `originalText`, else fall back by index. This moves the
+ *   "wrong draftId" workaround from the frontend into the backend where it
+ *   can be done deterministically.
+ * Returns null when the payload isn't a JSON array.
+ */
+function normalizeComments(parsed: unknown, draftsToReview: DocumentDraft[]): ReviewComment[] | null {
+  if (!Array.isArray(parsed)) return null;
+  const knownIds = new Set(draftsToReview.map((d) => d.id));
+  return parsed.map((c: Partial<ReviewComment>, idx: number): ReviewComment => {
+    let draftId = c.draftId ?? draftsToReview[0]?.id ?? '';
+    if (!knownIds.has(draftId)) {
+      const byContent = c.originalText
+        ? draftsToReview.find((d) => d.content.includes(c.originalText))
+        : undefined;
+      draftId = byContent?.id
+        ?? draftsToReview[Math.min(idx, draftsToReview.length - 1)]?.id
+        ?? draftsToReview[0]?.id
+        ?? '';
+    }
+    return {
+      id: c.id ?? uuidv4(),
+      draftId,
+      type: VALID_TYPES.has(c.type as ReviewComment['type']) ? (c.type as ReviewComment['type']) : 'suggestion',
+      section: c.section,
+      originalText: c.originalText,
+      suggestedText: c.suggestedText,
+      explanation: c.explanation ?? '',
+      accepted: false,
+    };
+  });
+}
+
+function tryParseComments(response: string, draftsToReview: DocumentDraft[]): ReviewComment[] | null {
+  try {
+    return normalizeComments(JSON.parse(extractJsonArray(response)), draftsToReview);
+  } catch {
+    return null;
+  }
 }
 
 export class ReviewerAgent extends BaseAgent {
@@ -75,26 +122,25 @@ Respond ONLY with valid JSON array, no markdown fences.`;
     if (draftsToReview.length === 0) return {};
 
     const draftsContext = draftsToReview.map((d) => `## ${d.title}\n\n${d.content}`).join('\n\n---\n\n');
-    const humanEditsNote = this.mode === 'post_edit_review' && state.humanEdits
-      ? `\n\nHuman editor notes:\n${state.humanEdits}` : '';
+    const humanEditsNote = this.mode === 'post_edit_review'
+      ? (state.humanEditedDrafts?.[0]?.content ?? state.humanEdits)
+        ? `\n\nHuman editor notes:\n${state.humanEditedDrafts?.[0]?.content ?? state.humanEdits}`
+        : ''
+      : '';
 
     const response = await this.callLLM(`Review the following document(s):\n\n${draftsContext}${humanEditsNote}`);
 
-    let comments: ReviewComment[];
-    try {
-      const parsed = JSON.parse(extractJsonArray(response));
-      comments = (Array.isArray(parsed) ? parsed : []).map((c: Partial<ReviewComment>) => ({
-        id: c.id ?? uuidv4(),
-        draftId: c.draftId ?? draftsToReview[0].id,
-        type: c.type ?? 'suggestion',
-        section: c.section,
-        originalText: c.originalText,
-        suggestedText: c.suggestedText,
-        explanation: c.explanation ?? '',
-        accepted: false,
-      }));
-    } catch {
-      comments = [{ id: uuidv4(), draftId: draftsToReview[0].id, type: 'info', explanation: response, accepted: false }];
+    // M6: parse with a one-shot retry. If the AI wrapped the JSON in fences /
+    // prose (or emitted malformed JSON), ask it to output ONLY the corrected
+    // array before degrading to a single info comment.
+    let comments = tryParseComments(response, draftsToReview);
+    if (!comments) {
+      const fixPrompt = `Your previous response was not valid JSON. Output ONLY a corrected JSON array of review comments (same schema as requested). No markdown fences, no prose.\n\nPrevious response:\n${response}`;
+      const retry = await this.callLLM(fixPrompt);
+      comments = tryParseComments(retry, draftsToReview);
+    }
+    if (!comments) {
+      comments = [{ id: uuidv4(), draftId: draftsToReview[0]?.id ?? '', type: 'info', explanation: response, accepted: false }];
     }
 
     switch (this.mode) {

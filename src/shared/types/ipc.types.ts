@@ -23,6 +23,9 @@ export const IPC_CHANNELS = {
   // RAG
   RAG_QUERY: 'rag:query',
   RAG_ADD_DOCUMENT: 'rag:addDocument',
+  RAG_REMOVE_DOCUMENT: 'rag:removeDocument',
+  RAG_CLEAR_INDEX: 'rag:clearIndex',
+  RAG_INDEX_STATS: 'rag:indexStats',
   // Settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
@@ -63,7 +66,8 @@ export interface WorkflowStreamEvent {
 
 export interface HumanReviewSubmitPayload {
   projectId: string;
-  editedContent: string;
+  /** Full edited drafts (multi-draft support). The active doc's content is applied. */
+  editedDrafts: import('./document.types').DocumentDraft[];
   acceptedCommentIds: string[];
 }
 
@@ -77,8 +81,8 @@ export interface HumanConfirmSubmitPayload {
    * Stage 6b to DITA generation (using the English drafts as the source).
    */
   skipLocalization?: boolean;
-  /** Edited draft content from the Stage 6b ReviewPanel (applied as humanEdits) */
-  editedContent?: string;
+  /** Full edited drafts from the Stage 6b ReviewPanel (multi-draft support) */
+  editedDrafts?: import('./document.types').DocumentDraft[];
   /** IDs of post-edit review comments the user accepted */
   acceptedCommentIds?: string[];
 }

@@ -18,8 +18,8 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({ documents, projectId, 
     window.electronAPI.file.showInFolder(filePath);
   };
 
-  const handleSaveAs = async (filePath: string, fileName: string) => {
-    const savedPath = await window.electronAPI.file.saveDita(filePath, fileName);
+  const handleSaveAs = async (filePath: string, fileName: string, format: string) => {
+    const savedPath = await window.electronAPI.file.saveDita(filePath, fileName, format);
     if (savedPath) {
       // Optional: could show a toast/notification here
       console.info('File saved to:', savedPath);
@@ -41,16 +41,15 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({ documents, projectId, 
     <div className="p-6 space-y-4 overflow-y-auto">
       <div className="flex items-center gap-2">
         <span className="text-2xl">✅</span>
-        <h2 className="text-lg font-semibold text-green-400">DITA 文档生成完成！</h2>
+        <h2 className="text-lg font-semibold text-green-400">文档生成完成！</h2>
       </div>
 
       <div className="p-3 bg-gray-800 rounded border border-gray-700">
         <p className="text-xs text-gray-400">
-          📋 文档格式: <span className="text-blue-400 font-medium">DITA 1.3 Concept Topic</span>
+          📋 文档格式: <span className="text-blue-400 font-medium">DITA 1.3 Concept Topic</span> + <span className="text-blue-400 font-medium">Word (.docx)</span>
         </p>
         <p className="text-xs text-gray-500 mt-1">
-          DITA (Darwin Information Typing Architecture) 是结构化技术文档的 XML 标准格式，
-          可用于各类内容管理系统和发布工具。
+          每篇文档同时导出 DITA XML（结构化技术文档标准）与 Word 版本，可用于内容管理系统、发布工具或直接编辑。
         </p>
       </div>
 
@@ -69,7 +68,7 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({ documents, projectId, 
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => handleSaveAs(doc.filePath, doc.fileName)}
+                onClick={() => handleSaveAs(doc.filePath, doc.fileName, doc.format)}
                 className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors"
               >
                 💾 导出到...

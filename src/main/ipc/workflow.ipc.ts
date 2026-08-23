@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/types/ipc.types';
 import type { WorkflowEngine } from '../modules/workflow/index';
 import type { ReviewComment } from '../../shared/types/document.types';
+import { allowFileReadMany } from '../modules/security/path-guard';
 import { v4 as uuidv4 } from 'uuid';
 import log from 'electron-log';
 
@@ -12,6 +13,8 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       fileCount: payload.filePaths?.length ?? 0,
       filePaths: payload.filePaths,
     });
+    // Register the input files so the renderer can preview them via file:read.
+    allowFileReadMany(payload.filePaths ?? []);
     const projectId = payload.projectId ?? uuidv4();
     try {
       const state = await engine.startWorkflow(projectId, payload.filePaths ?? []);
@@ -41,22 +44,24 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_HUMAN_REVIEW_SUBMIT, async (_event, payload) => {
     log.info('[WF][IPC] workflow:humanReviewSubmit received', {
       projectId: payload.projectId,
+      draftCount: payload.editedDrafts?.length ?? 0,
       acceptedCount: payload.acceptedCommentIds?.length ?? 0,
     });
 
     const currentState = engine.getState(payload.projectId);
-    // Store the edited content as humanEdits — the pipeline resume handler
-    // will apply it to drafts[] for subsequent stages (forward flow only).
+    // Store the edited drafts as humanEditedDrafts (multi-draft, M1) plus the
+    // legacy single-string humanEdits (drafts[0].content) for backward compat.
     // We do NOT overwrite drafts here because going-back to human_review
     // must show the original draft, not a previously accepted version.
     engine.resumeFromHumanInput(payload.projectId, {
-      humanEdits: payload.editedContent,
+      humanEditedDrafts: payload.editedDrafts ?? [],
+      humanEdits: payload.editedDrafts?.[0]?.content ?? '',
       aiReviewComments: (currentState?.aiReviewComments ?? []).map((c: ReviewComment) => ({
         ...c,
         accepted: payload.acceptedCommentIds.includes(c.id),
       })),
     });
-    log.info('[WF][IPC] workflow:humanReviewSubmit applied — humanEdits stored', { projectId: payload.projectId });
+    log.info('[WF][IPC] workflow:humanReviewSubmit applied — humanEditedDrafts stored', { projectId: payload.projectId });
   });
 
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_HUMAN_CONFIRM_SUBMIT, async (_event, payload) => {
@@ -64,7 +69,7 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       projectId: payload.projectId,
       approved: payload.approved,
       targetLanguage: payload.targetLanguage,
-      hasEditedContent: !!payload.editedContent,
+      hasEditedDrafts: !!payload.editedDrafts,
       acceptedCount: payload.acceptedCommentIds?.length ?? 0,
     });
     const currentState = engine.getState(payload.projectId);
@@ -72,9 +77,9 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       humanConfirmed: payload.approved,
       targetLanguage: payload.targetLanguage ?? 'zh-CN',
       skipLocalization: payload.skipLocalization ?? false,
-      // If the user edited the draft in Stage 6b, store as humanEdits so the
-      // pipeline applies it to drafts[] for subsequent stages (localize, etc.).
-      ...(payload.editedContent ? { humanEdits: payload.editedContent } : {}),
+      // If the user edited drafts in Stage 6b, store as humanEditedDrafts so
+      // the pipeline applies them to drafts for subsequent stages (localize, etc.).
+      ...(payload.editedDrafts ? { humanEditedDrafts: payload.editedDrafts, humanEdits: payload.editedDrafts[0]?.content ?? '' } : {}),
       // Mark accepted post-edit review comments so downstream stages know.
       postEditReviewComments: (currentState?.postEditReviewComments ?? []).map((c: ReviewComment) => ({
         ...c,
@@ -117,14 +122,23 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_PAUSE, async (_event, { projectId }) => {
-    // Pause is a no-op in current implementation — human review stages handle pausing
-    void projectId;
-    log.info('[WF][IPC] workflow:pause (no-op)', { projectId });
+    // M3: real pause — aborts the in-flight graph invoke (cancelling the
+    // current LLM call via the threaded AbortSignal) and marks PAUSED:USER.
+    log.info('[WF][IPC] workflow:pause received', { projectId });
+    await engine.pauseWorkflow(projectId);
+    log.info('[WF][IPC] workflow:pause applied', { projectId });
   });
 
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_RESUME, async (_event, { projectId }) => {
     log.info('[WF][IPC] workflow:resume received', { projectId });
-    engine.resumeFromHumanInput(projectId, {});
+    const state = engine.getState(projectId);
+    if (state?.status === 'PAUSED:USER') {
+      // Resume a user-paused workflow from its last checkpoint.
+      await engine.resumeWorkflow(projectId);
+    } else {
+      // Resume a human-interrupt stage.
+      engine.resumeFromHumanInput(projectId, {});
+    }
     log.info('[WF][IPC] workflow:resume applied', { projectId });
   });
 
