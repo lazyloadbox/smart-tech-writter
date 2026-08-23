@@ -78,7 +78,7 @@ jobs:
 
       # 创建 GitHub Release 并附带全部构建产物
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: "v${{ steps.version.outputs.newVersion }}"
           files: |

@@ -5,6 +5,9 @@ name: Build Windows
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -44,3 +47,26 @@ jobs:
             out/make/squirrel.windows/x64/RELEASES
             dist/*.exe
           if-no-files-found: error
+
+      # 把构建产物发布到 GitHub Release（固定 tag: nightly，每次构建覆盖更新）
+      # 这样仓库 Releases 页面会显示可下载的安装包链接（不会成为 Latest，Latest 保留给正式 Release）
+      - name: Publish to GitHub Release (nightly)
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          body: |
+            手动构建产物（不改变版本号，供测试/分发）。
+
+            - 构建运行号：${{ github.run_number }}
+            - 提交：${{ github.sha }}
+            - 触发：${{ github.actor }}
+          files: |
+            out/make/squirrel.windows/x64/*.exe
+            out/make/squirrel.windows/x64/*.nupkg
+            out/make/squirrel.windows/x64/RELEASES
+            dist/*.exe
