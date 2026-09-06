@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_REVIEW_CONTINUE, payload),
     aiEditDraft: (payload: import('../shared/types/ipc.types').AiEditDraftPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_AI_EDIT_DRAFT, payload),
+    aiEditArtifact: (payload: import('../shared/types/ipc.types').WorkflowAiEditArtifactPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_AI_EDIT_ARTIFACT, payload),
     onProgress: (callback: (event: WorkflowProgressEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: WorkflowProgressEvent) =>
         callback(data);
@@ -117,6 +119,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_HUMAN_LOCALIZE_SUBMIT, payload),
     submitHumanConfirm: (payload: import('../shared/types/ipc.types').LocalizeHumanConfirmSubmitPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_HUMAN_CONFIRM_SUBMIT, payload),
+    aiEditArtifact: (payload: import('../shared/types/ipc.types').AiEditArtifactPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_AI_EDIT_ARTIFACT, payload),
     goBack: (payload: import('../shared/types/ipc.types').LocalizeGoBackPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_GO_BACK, payload),
     listRuns: () => ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_RUNS_LIST),

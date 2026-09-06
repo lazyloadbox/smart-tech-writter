@@ -7,33 +7,26 @@ import { LocalizePreviewModal } from './components/LocalizePreviewModal';
 import { useMappingStore } from '../../stores/mapping.store';
 import type { LocalizeLanguage } from '../../../shared/types/document.types';
 import type { LocalizationStage, LocalizationFileResult } from '../../../shared/types/localization.types';
+import { en as ui, formatUi, languageLabel, pluralUnit } from '../../../shared/i18n';
 
 const LANG_OPTIONS: { value: LocalizeLanguage; label: string }[] = [
-  { value: 'en', label: 'English（英文）' },
-  { value: 'zh-CN', label: '简体中文（中国大陆）' },
-  { value: 'zh-TW', label: '繁體中文（台灣）' },
+  { value: 'en', label: ui.languages.en },
+  { value: 'zh-CN', label: ui.languages['zh-CN'] },
+  { value: 'zh-TW', label: ui.languages['zh-TW'] },
 ];
 
 /** Workflow steps shown in the left vertical navigation (mirrors doc-generator). */
 const LOCALIZE_STEPS: StepNavItem[] = [
-  { id: 'localize', label: '1. AI 翻译' },
-  { id: 'review_localize', label: '1a. 人工审阅', isPause: true },
-  { id: 'localize_ai_review', label: '2. AI 评审' },
-  { id: 'human_localize_review', label: '2a. 人工审核', isPause: true },
-  { id: 'post_edit_review', label: '3. AI 修改建议' },
-  { id: 'human_confirm', label: '3a. 人工确认', isPause: true },
-  { id: 'export', label: '4. 导出' },
+  { id: 'localize', label: ui.localization.stageSteps.localize },
+  { id: 'review_localize', label: ui.localization.stageSteps.review_localize, isPause: true },
+  { id: 'localize_ai_review', label: ui.localization.stageSteps.localize_ai_review },
+  { id: 'human_localize_review', label: ui.localization.stageSteps.human_localize_review, isPause: true },
+  { id: 'post_edit_review', label: ui.localization.stageSteps.post_edit_review },
+  { id: 'human_confirm', label: ui.localization.stageSteps.human_confirm, isPause: true },
+  { id: 'export', label: ui.localization.stageSteps.export },
 ];
 
-const RUNNING_MESSAGES: Record<LocalizationStage, string> = {
-  localize: 'AI 正在翻译 DITA 文档...',
-  review_localize: '请审阅翻译结果...',
-  localize_ai_review: 'AI 正在审查本地化质量...',
-  human_localize_review: '请审核本地化结果...',
-  post_edit_review: 'AI 正在根据人工修改给出建议...',
-  human_confirm: '请确认最终结果...',
-  export: '正在导出...',
-};
+const RUNNING_MESSAGES: Record<LocalizationStage, string> = ui.localization.running;
 
 export const LocalizationTab: React.FC = () => {
   const {
@@ -55,6 +48,7 @@ export const LocalizationTab: React.FC = () => {
     continueFromReviewLocalize,
     submitHumanLocalizeReview,
     submitHumanConfirm,
+    aiEditArtifact,
     goBack,
     exportTo,
     setTargetLanguage,
@@ -94,7 +88,7 @@ export const LocalizationTab: React.FC = () => {
     }
   }, [thinkingText]);
 
-  const langLabel = LANG_OPTIONS.find((o) => o.value === targetLanguage)?.label ?? targetLanguage;
+  const langLabel = languageLabel(targetLanguage);
 
   // Load translation-mapping stats so the IDLE view can show how many glossary
   // entries will be referenced for the selected target language. Each glossary
@@ -114,8 +108,8 @@ export const LocalizationTab: React.FC = () => {
   // ─── Header (shared across all states) ───
   const header = (
     <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-      <h2 className="text-sm font-semibold text-gray-200">🌐 DITA 本地化</h2>
-      <span className="text-xs text-gray-500">完整复刻文档生成的本地化工作流</span>
+      <h2 className="text-sm font-semibold text-gray-200">🌐 {ui.localization.title}</h2>
+      <span className="text-xs text-gray-500">{ui.localization.subtitle}</span>
       <div className="flex-1" />
     </div>
   );
@@ -132,10 +126,10 @@ export const LocalizationTab: React.FC = () => {
                   onClick={selectFiles}
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                 >
-                  📂 选择 DITA 文件
+                  📂 {ui.localization.selectFiles}
                 </button>
                 <span className="text-xs text-gray-400">
-                  {files.length > 0 ? `已选择 ${files.length} 个文件` : '支持多选 .dita 文件'}
+                  {files.length > 0 ? formatUi(ui.localization.selectedFiles, { count: files.length }) : ui.localization.multiSelectHint}
                 </span>
               </div>
 
@@ -150,7 +144,7 @@ export const LocalizationTab: React.FC = () => {
               )}
 
               <div className="mt-4 flex items-center gap-3 flex-wrap">
-                <span className="text-xs font-medium text-gray-300 whitespace-nowrap">🌐 目标语言</span>
+                <span className="text-xs font-medium text-gray-300 whitespace-nowrap">🌐 {ui.common.targetLanguage}</span>
                 <div className="flex flex-wrap gap-1.5">
                   {LANG_OPTIONS.map((opt) => (
                     <button
@@ -171,7 +165,7 @@ export const LocalizationTab: React.FC = () => {
                   disabled={files.length === 0}
                   className="ml-auto px-4 py-1.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-sm rounded transition-colors"
                 >
-                  ▶ 开始翻译
+                  ▶ {ui.localization.start}
                 </button>
               </div>
             </section>
@@ -180,29 +174,29 @@ export const LocalizationTab: React.FC = () => {
             <section className="bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 flex items-center gap-3">
               <span className="text-base">🔁</span>
               <div className="text-xs text-gray-400 leading-relaxed">
-                <span className="text-gray-300">翻译映射（术语表）：</span>
-                当前语言
-                <span className="text-gray-200 font-medium"> {langLabel} </span>
-                已配置
+                <span className="text-gray-300">{ui.localization.mappingLabel}</span>{' '}
                 <span className={mappingCount > 0 ? 'text-blue-300 font-semibold' : 'text-gray-500'}>
-                  {mappingCount}
-                </span>
-                条映射。翻译时 AI 会自动参考这些已确认的术语翻译，保证术语一致性。
-                <span className="text-gray-500">（可在「设置 → 翻译映射」中维护，支持 Excel 导入）</span>
+                  {formatUi(ui.localization.mappingSummary, {
+                    count: mappingCount,
+                    unit: pluralUnit(mappingCount, ui.common.entry, ui.common.entries),
+                    language: langLabel,
+                  })}
+                </span>{' '}
+                <span className="text-gray-500">{ui.localization.mappingSettingsHint}</span>
               </div>
             </section>
 
             {/* Workflow explanation */}
             <section className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-200 mb-2">📋 工作流说明</h3>
+              <h3 className="text-sm font-semibold text-gray-200 mb-2">📋 {ui.localization.workflowGuide}</h3>
               <ol className="list-decimal list-inside text-xs text-gray-400 space-y-1.5 leading-relaxed">
-                <li><span className="text-gray-300">AI 翻译</span> — 将每个 DITA 文件翻译为目标语言（保留 XML 结构）</li>
-                <li><span className="text-gray-300">人工审阅</span> — 对照原文检查翻译结果，可直接修改译文</li>
-                <li><span className="text-gray-300">AI 评审</span> — AI 审查翻译准确性、术语一致性与语言流畅度</li>
-                <li><span className="text-gray-300">人工审核</span> — 接受/拒绝 AI 建议并直接编辑译文</li>
-                <li><span className="text-gray-300">AI 修改建议</span> — 人工编辑后 AI 复查，给出进一步修改建议</li>
-                <li><span className="text-gray-300">人工确认</span> — 处理最终建议并确认结果</li>
-                <li><span className="text-gray-300">导出</span> — 选择目录导出 &lt;文件名&gt;.&lt;语言&gt;.dita</li>
+                <li>{ui.localization.steps.translate}</li>
+                <li>{ui.localization.steps.humanReview}</li>
+                <li>{ui.localization.steps.aiReview}</li>
+                <li>{ui.localization.steps.humanLocalization}</li>
+                <li>{ui.localization.steps.postEdit}</li>
+                <li>{ui.localization.steps.confirmation}</li>
+                <li>{ui.localization.steps.export}</li>
               </ol>
             </section>
           </div>
@@ -227,11 +221,11 @@ export const LocalizationTab: React.FC = () => {
             {/* Streaming viewer for the current file */}
             <section className="bg-gray-800 border border-gray-700 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-200 mb-2">
-                {activeFile ? `⏳ ${STAGE_LABELS[stage]}：${activeFile.split(/[\\/]/).pop()}` : STAGE_LABELS[stage]}
+                {activeFile ? `⏳ ${STAGE_LABELS[stage]}: ${activeFile.split(/[\\/]/).pop()}` : STAGE_LABELS[stage]}
               </h3>
               {thinkingText && (
                 <details open className="mb-2">
-                  <summary className="text-xs text-amber-400/80 italic cursor-pointer select-none">思考过程</summary>
+                  <summary className="text-xs text-amber-400/80 italic cursor-pointer select-none">{ui.localization.thinking}</summary>
                   <pre
                     ref={thinkingScrollRef}
                     className="mt-1 max-h-60 overflow-y-auto text-xs text-amber-300/70 italic whitespace-pre-wrap break-words font-mono"
@@ -241,14 +235,14 @@ export const LocalizationTab: React.FC = () => {
                 </details>
               )}
               <pre className="text-xs text-gray-300 whitespace-pre-wrap break-words font-mono">
-                {contentText || '等待输出…'}
+                {contentText || ui.localization.waitingOutput}
               </pre>
             </section>
 
             {/* Logs */}
             {logs.length > 0 && (
               <section className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-2">进度日志</h3>
+                <h3 className="text-sm font-semibold text-gray-200 mb-2">{ui.localization.progressLog}</h3>
                 <div className="space-y-1">
                   {logs.map((l) => (
                     <div key={l.id} className="text-xs flex gap-2">
@@ -272,7 +266,7 @@ export const LocalizationTab: React.FC = () => {
           </div>
           <div className="shrink-0 px-6 py-2 border-t border-gray-700/60 bg-gray-900/70 flex items-center gap-2 text-xs text-gray-500">
             <span className="inline-block w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-            正在处理中，请稍候...
+            {ui.localization.processing}
           </div>
         </div>
       );
@@ -283,9 +277,9 @@ export const LocalizationTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">🌐 AI 本地化结果 — 请审阅并修改后继续</h2>
+            <h2 className="text-sm font-semibold text-gray-200">🌐 {ui.localization.localizationResultReview}</h2>
             <div className="flex-1" />
-            <span className="text-xs text-gray-400">{results.length} 个文件 · {langLabel}</span>
+            <span className="text-xs text-gray-400">{formatUi(ui.localization.resultCount, { count: results.length, language: langLabel })}</span>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
             <ReviewPanel
@@ -294,15 +288,17 @@ export const LocalizationTab: React.FC = () => {
               leftPanel="original"
               originalDrafts={originalDrafts}
               onSubmit={(editedDrafts) => continueFromReviewLocalize(editedDrafts)}
-              title="本地化结果（可直接编辑）"
-              submitLabel="▶ 确认，进入 AI 本地化评审"
+              onAiEdit={aiEditArtifact}
+              aiArtifactLabel={ui.localization.stageSteps.review_localize}
+              title={ui.localization.localizedResultEditable}
+              submitLabel={`▶ ${ui.localization.confirmAiReview}`}
               editorMode="xml"
               footerLeft={
                 <button
                   onClick={() => goBack('localize')}
                   className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors"
                 >
-                  ↩ 返回重新翻译
+                  ↩ {ui.localization.returnToTranslation}
                 </button>
               }
             />
@@ -316,25 +312,25 @@ export const LocalizationTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">人工本地化审核 — 接受/拒绝 AI 建议并编辑</h2>
+            <h2 className="text-sm font-semibold text-gray-200">{ui.localization.humanReview}</h2>
             <div className="flex-1" />
             <button
               onClick={() => setShowOriginal((v) => !v)}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
             >
-              {showOriginal ? '隐藏原文' : '查看原文'}
+              {showOriginal ? ui.localization.hideOriginal : ui.localization.viewOriginal}
             </button>
             <button
               onClick={() => goBack('localize_ai_review')}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
             >
-              ↩ 返回 AI 评审
+              ↩ {ui.localization.backToAiReview}
             </button>
           </div>
           <div className="flex-1 flex overflow-hidden">
             {showOriginal && (
               <div className="w-1/3 shrink-0 border-r border-gray-700 overflow-y-auto p-4">
-                <p className="text-xs text-gray-400 mb-2 font-semibold">📄 原文（只读）</p>
+                <p className="text-xs text-gray-400 mb-2 font-semibold">📄 {ui.review.sourceReadOnly}</p>
                 {originalDrafts.map((d) => (
                   <div key={d.id} className="mb-4">
                     <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
@@ -348,8 +344,10 @@ export const LocalizationTab: React.FC = () => {
                 drafts={localizedDrafts}
                 comments={reviewComments}
                 onSubmit={(editedDrafts, acceptedIds) => submitHumanLocalizeReview(editedDrafts, acceptedIds)}
-                title="本地化结果（可编辑）"
-                submitLabel="确认修改，进入 AI 修改建议 ▶"
+                onAiEdit={aiEditArtifact}
+                aiArtifactLabel={ui.localization.stageSteps.human_localize_review}
+                title={ui.localization.localizedResultEditable}
+                submitLabel={`${ui.localization.submitChanges} ▶`}
                 editorMode="xml"
               />
             </div>
@@ -363,25 +361,25 @@ export const LocalizationTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">人工最终确认 — 处理 AI 修改建议</h2>
+            <h2 className="text-sm font-semibold text-gray-200">{ui.localization.finalReview}</h2>
             <div className="flex-1" />
             <button
               onClick={() => setShowOriginal((v) => !v)}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
             >
-              {showOriginal ? '隐藏原文' : '查看原文'}
+              {showOriginal ? ui.localization.hideOriginal : ui.localization.viewOriginal}
             </button>
             <button
               onClick={() => goBack('post_edit_review')}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
             >
-              ↩ 返回人工审核
+              ↩ {ui.localization.backToHumanReview}
             </button>
           </div>
           <div className="flex-1 flex overflow-hidden">
             {showOriginal && (
               <div className="w-1/3 shrink-0 border-r border-gray-700 overflow-y-auto p-4">
-                <p className="text-xs text-gray-400 mb-2 font-semibold">📄 原文（只读）</p>
+                <p className="text-xs text-gray-400 mb-2 font-semibold">📄 {ui.review.sourceReadOnly}</p>
                 {originalDrafts.map((d) => (
                   <div key={d.id} className="mb-4">
                     <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
@@ -395,8 +393,10 @@ export const LocalizationTab: React.FC = () => {
                 drafts={localizedDrafts}
                 comments={postEditComments}
                 onSubmit={(editedDrafts, acceptedIds) => submitHumanConfirm(editedDrafts, acceptedIds)}
-                title="最终结果（可编辑）"
-                submitLabel="✅ 确认完成，导出文件 ▶"
+                onAiEdit={aiEditArtifact}
+                aiArtifactLabel={ui.localization.stageSteps.human_confirm}
+                title={ui.localization.finalResult}
+                submitLabel={`✅ ${ui.localization.confirmExport} ▶`}
                 editorMode="xml"
               />
             </div>
@@ -411,9 +411,9 @@ export const LocalizationTab: React.FC = () => {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-4xl w-full mx-auto px-6 py-6 space-y-6">
             <section className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-200 mb-1">✅ 翻译完成</h3>
+              <h3 className="text-sm font-semibold text-gray-200 mb-1">✅ {ui.localization.translationComplete}</h3>
               <p className="text-xs text-gray-500 mb-3">
-                导出文件名格式：&lt;文件名&gt;.&lt;语言&gt;.dita（如 {results[0]?.exportFileName ?? '综合技术文档.zh-TW.dita'}）
+                {formatUi(ui.localization.filenameFormat, { example: results[0]?.exportFileName ?? 'technical-document.zh-TW.dita' })}
               </p>
               <div className="divide-y divide-gray-700">
                 {results.map((r) => (
@@ -425,34 +425,34 @@ export const LocalizationTab: React.FC = () => {
                       <div className="text-sm text-gray-200 truncate">{r.fileName}</div>
                       {r.status === 'done' && (
                         <div className="text-xs text-gray-500 truncate">
-                          导出为 <span className="text-gray-300 font-mono">{r.exportFileName}</span>
+                          {ui.localization.exportedAs} <span className="text-gray-300 font-mono">{r.exportFileName}</span>
                         </div>
                       )}
                       <div className="text-xs mt-0.5">
                         {r.status === 'done' ? (
                           r.validated ? (
                             r.repaired ? (
-                              <span className="text-amber-400">⚠️ 已自动修复 XML 问题</span>
+                              <span className="text-amber-400">⚠️ {ui.localization.xmlAutoRepaired}</span>
                             ) : (
-                              <span className="text-green-400">✅ XML 校验通过</span>
+                               <span className="text-green-400">✅ {ui.localization.xmlValid}</span>
                             )
                           ) : (
-                            <span className="text-red-400">❌ XML 校验未通过</span>
+                            <span className="text-red-400">❌ {ui.localization.xmlInvalid}</span>
                           )
                         ) : (
-                          <span className="text-red-400">{r.error ?? '未知错误'}</span>
+                          <span className="text-red-400">{r.error ?? ui.localization.unknownError}</span>
                         )}
                       </div>
                     </div>
                     <span className="text-[10px] text-gray-500 shrink-0">
-                      {r.reviewComments.length} 条评审 · {r.postEditComments.length} 条修改建议
+                      {formatUi(ui.localization.reviewSummary, { reviews: r.reviewComments.length, suggestions: r.postEditComments.length })}
                     </span>
                     {r.status === 'done' && (
                       <button
                         onClick={() => setPreviewResult(r)}
                         className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors shrink-0"
                       >
-                        👁 查看
+                        👁 {ui.localization.viewPreview}
                       </button>
                     )}
                   </div>
@@ -463,11 +463,11 @@ export const LocalizationTab: React.FC = () => {
                   onClick={exportTo}
                   className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
                 >
-                  📁 选择目录并导出
+                  📁 {ui.localization.chooseDirectoryAndExport}
                 </button>
                 {exportResult && (
                   <span className="text-xs text-green-400">
-                    已导出 {exportResult.count} 个文件到 {exportResult.destDir}
+                    {formatUi(ui.localization.exportSuccess, { count: exportResult.count, directory: exportResult.destDir })}
                   </span>
                 )}
               </div>
@@ -482,9 +482,9 @@ export const LocalizationTab: React.FC = () => {
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="p-4 bg-red-900/30 border border-red-700 rounded">
-            <p className="text-red-400 font-medium">❌ 本地化失败</p>
+            <p className="text-red-400 font-medium">❌ {ui.localization.failed}</p>
             <p className="text-red-300 text-sm mt-1">
-              部分文件翻译失败，请检查文件内容或 AI 服务配置后重试。
+              {ui.localization.failureDescription}
             </p>
           </div>
           <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 divide-y divide-gray-700">
@@ -502,10 +502,10 @@ export const LocalizationTab: React.FC = () => {
               onClick={() => goBack('localize')}
               className="px-4 py-2 bg-yellow-700 hover:bg-yellow-600 text-sm text-gray-200 rounded transition-colors"
             >
-              ↩ 返回重新翻译
+              ↩ {ui.localization.returnToTranslation}
             </button>
             <button onClick={reset} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-sm text-gray-200 rounded">
-              重新开始
+              {ui.localization.reset}
             </button>
           </div>
         </div>
@@ -518,7 +518,7 @@ export const LocalizationTab: React.FC = () => {
       {header}
       <div className="flex flex-1 overflow-hidden min-h-0">
         <StepNavigation
-          title="本地化步骤"
+          title={ui.common.workflowSteps}
           steps={LOCALIZE_STEPS}
           currentStep={stage}
           status={status}
@@ -528,7 +528,7 @@ export const LocalizationTab: React.FC = () => {
               onClick={reset}
               className="w-full py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
             >
-              ↺ 新建翻译
+              ↺ {ui.localization.newTranslation}
             </button>
           }
         />

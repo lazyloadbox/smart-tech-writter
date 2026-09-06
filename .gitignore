@@ -97,6 +97,9 @@ local.md
 # Build output (Vite renderer)
 /dist/
 
+# Electron portable build output
+/dist-portable/
+
 # Test build output
 test/langgraph/dist/
 

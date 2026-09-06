@@ -3,6 +3,7 @@ import { useWorkflowStore } from '../../../stores/workflow.store';
 import { workflowApi } from '../../../api/workflow.api';
 import type { DocGenState, StageName, WorkflowLogEntry } from '../../../../shared/types/workflow.types';
 import type { LocalizeLanguage } from '../../../../shared/types/document.types';
+import type { AiArtifactFormat, ReviewContinuePayload } from '../../../../shared/types/ipc.types';
 
 export function useWorkflow() {
   const store = useWorkflowStore();
@@ -144,9 +145,9 @@ export function useWorkflow() {
   );
 
   const reviewContinue = useCallback(
-    (stage: StageName, editedDrafts?: import('../../../../shared/types/document.types').DocumentDraft[]) => {
-      console.info('[WF][Renderer][Hook] reviewContinue called', { projectId: store.projectId, stage, hasEditedDrafts: !!editedDrafts });
-      return workflowApi.reviewContinue(store.projectId, stage, editedDrafts);
+    (stage: StageName, edits?: Omit<ReviewContinuePayload, 'projectId' | 'stage'>) => {
+      console.info('[WF][Renderer][Hook] reviewContinue called', { projectId: store.projectId, stage, editedFields: Object.keys(edits ?? {}) });
+      return workflowApi.reviewContinue(store.projectId, stage, edits);
     },
     [store.projectId]
   );
@@ -154,6 +155,12 @@ export function useWorkflow() {
   const aiEditDraft = useCallback(
     (currentContent: string, instruction: string) =>
       workflowApi.aiEditDraft(store.projectId, currentContent, instruction),
+    [store.projectId]
+  );
+
+  const aiEditArtifact = useCallback(
+    (currentContent: string, instruction: string, format: AiArtifactFormat, stage?: StageName) =>
+      workflowApi.aiEditArtifact(store.projectId, currentContent, instruction, format, stage),
     [store.projectId]
   );
 
@@ -174,6 +181,7 @@ export function useWorkflow() {
     submitHumanDita,
     reviewContinue,
     aiEditDraft,
+    aiEditArtifact,
     setTargetLanguage,
   };
 }

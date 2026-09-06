@@ -2,7 +2,7 @@
 
 ## 1.1 产品定位
 
-Smart Tech Writer（产品名 `smart-tech-writter`）是一个**面向工业自动化领域技术文档工程师的 AI 辅助文档生成桌面工具**。它把"阅读零散源材料 → 分析技术要点 → 撰写技术文档 → 多轮质检 → 本地化 → 输出结构化 XML"这一完整文档工程流程，编排为一条带有人工检查点（Human-in-the-loop）的 20 阶段流水线（LangGraph 图编排）。
+Smart Tech Writer（产品名 `smart-tech-writter`）是一个**面向工业自动化领域技术文档工程师的 AI 辅助文档生成桌面工具**。它把"阅读零散源材料 → 分析技术要点 → 撰写技术文档 → 人工质检 → 输出结构化 XML"这一文档工程流程，编排为一条带有人工检查点（Human-in-the-loop）的流水线（LangGraph 图编排）。
 
 除文档生成主流程外，产品还提供：
 
@@ -20,14 +20,14 @@ Smart Tech Writer（产品名 `smart-tech-writter`）是一个**面向工业自�
 | 能力 | 实现方式 | 对应模块 |
 |---|---|---|
 | 多格式输入解析 | `.docx` `.pdf` `.eml` `.txt/.md/.csv/.log` + 24 种代码文件 | `file-readers/*` |
-| AI 文档解析 | 每文件生成 summary（长文本 map-reduce 分段摘要，支持全局/单文件解析提示词） | `FileParserAgent` |
+| AI 文档解析 | 每文件生成完整 Markdown 提炼（长文本逐块完整提取，支持全局/单文件解析提示词） | `FileParserAgent` |
 | AI 深度分析 | 每文件生成 keyPoints / keywords / technicalTerms | `AnalyzerAgent` |
 | 参考资料检索 | 语义向量检索（无索引/embed 失败时回退关键词） | `SemanticSearchService` |
 | AI 草稿生成 | 基于分析结果生成 1 篇综合 Markdown 文档（章节结构可自定义） | `WriterAgent` |
 | AI 质量审查 | 4 种审查模式输出 JSON 评论数组 | `ReviewerAgent` |
-| 人工审查 | 9 个暂停点，可接受/拒绝 AI 建议、手改文本 | `ReviewPanel` |
+| 人工审查 | 7 个暂停点，可接受/拒绝 AI 建议、手改文本 | `ReviewPanel` |
 | AI 指令改稿 | 自然语言指令流式改稿（Stage 3a） | `WorkflowEngine.aiEditDraft` |
-| 本地化 | zh-CN / zh-TW / en 三语种（可跳过，由独立工具承接） | `LocalizerAgent` |
+| 本地化 | Gen Doc 主流程已移除；由独立 DITA 本地化工具承接 | `LocalizationService` |
 | 独立 DITA 本地化 | 批量翻译 `.dita` 文件，7 阶段工作流 + 术语表注入 | `LocalizationService` |
 | 术语表管理 | 三列映射（en/zh-CN/zh-TW）CRUD + Excel/CSV 导入 | `MappingService` |
 | 结构化输出 | Markdown → DITA 1.3 Concept Topic XML（校验 + 自动修复） | `dita.builder.ts` |
@@ -45,15 +45,13 @@ journey
       设置文档大纲/解析提示词: 4: 用户
       启动工作流: 5: 用户
     section AI 处理
-      文件解析 + AI 摘要: 3: 系统
+      文件解析 + AI 完整提炼: 3: 系统
       AI 分析 + 参考资料检索: 3: 系统
       AI 生成草稿: 3: 系统
     section 人机协作审查
       人工审阅草稿 (3a): 5: 用户
       人工接受/拒绝 AI 建议 (5): 5: 用户
-      人工确认 + 选择目标语言 (6b): 5: 用户
-      人工本地化审核 (7c): 5: 用户
-      人工 DITA 审核 (8c): 5: 用户
+      人工 DITA 审核 (6c): 5: 用户
     section 输出
       导出 .dita + .docx 文件: 5: 用户
     section 后续（可选）
@@ -75,7 +73,7 @@ journey
 | D8 | **DITA + DOCX 双格式导出** | `runExportStage` 每篇同时写 `.dita` + `.docx`（`buildDocx` 接入）；DITA 构建后 `validateDitaXml` 校验并输出警告 |
 | D9 | **安全基线** | `contextIsolation: true`、`nodeIntegration: false`、Forge Fuses 关闭 `RunAsNode`、启用 asar 完整性校验、`PathGuard` 文件读取白名单 |
 | D10 | **默认跳过本地化** | `skipLocalization` 默认 `true`（英文文档直接生成 DITA），本地化由独立工具承接；用户显式选语言时仍启用 |
-| D11 | **提示词集中管理** | 所有 Agent 提示词定义在 `prompts/` 模块（PROMPTS 注册表），拆分为 role/task/outputFormat，支持设置页覆盖（`prompts.overrides`） |
+| D11 | **提示词集中管理** | 所有 Agent 提示词定义在 `prompts/` 模块（PROMPTS 注册表），以完整 Markdown 工作定义维护，支持设置页整体覆盖（`prompts.overrides`） |
 | D12 | **文档大纲参数化** | `DocumentOutline {sections, mergeIntoSingle}` 控制撰写章节结构，不再固定模板 |
 
 ## 1.5 术语表
@@ -89,7 +87,7 @@ journey
 | humanEdits | Stage 5 人工编辑后的整篇内容（字符串，兼容旧版） | `DocGenState.humanEdits` |
 | humanEditedDrafts | 按草稿粒度保存的人工编辑（多草稿支持） | `DocGenState.humanEditedDrafts` |
 | effective drafts | 套用人工编辑后的草稿（不持久化） | `graph.ts makeExecutionNode` |
-| ingestContext | ingest 阶段汇总的结构化上下文（元数据 + AI 摘要 + 提取文本） | `DocGenState.ingestContext` |
+| ingestContext | ingest 阶段汇总的 Markdown 证据上下文（完整提炼 + 原文基线） | `DocGenState.ingestContext` |
 | documentOutline | 文档大纲（章节结构，可自定义） | `DocGenState.documentOutline` |
 | parseInstruction | 全局/单文件解析提示词 | `DocGenState.parseInstruction` / `UploadedFile.parseInstruction` |
 | RAG | 检索增强生成；语义向量索引（`rag_chunks` 表）+ 关键词回退 | `SemanticSearchService` |

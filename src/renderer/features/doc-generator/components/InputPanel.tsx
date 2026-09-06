@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import type { UploadedFile, DocumentOutline } from '../../../../shared/types/document.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 
 interface InputPanelProps {
   files: UploadedFile[];
@@ -76,7 +77,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
   return (
     <div className="p-6 space-y-4">
-      <h2 className="text-lg font-semibold text-gray-100">Stage 0 — 上传 & 解析</h2>
+      <h2 className="text-lg font-semibold text-gray-100">{ui.docGenerator.stageZero}</h2>
 
       {/* Drop zone */}
       <div
@@ -90,15 +91,15 @@ export const InputPanel: React.FC<InputPanelProps> = ({
       >
         <div className="text-gray-400 text-sm">
           <div className="text-2xl mb-2">📂</div>
-          <p>拖拽文件到此处，或 <span className="text-blue-400 underline">选择文件</span></p>
-          <p className="text-xs mt-1 text-gray-500">支持: .docx  .pdf  .txt  .md  .eml  代码文件</p>
+          <p>{ui.docGenerator.dropFiles} <span className="text-blue-400 underline">{ui.docGenerator.chooseFiles}</span></p>
+          <p className="text-xs mt-1 text-gray-500">{ui.docGenerator.supportedFiles}</p>
         </div>
       </div>
 
       {/* File list */}
       {files.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs text-gray-400 uppercase font-semibold">已添加文件 ({files.length})</p>
+          <p className="text-xs text-gray-400 uppercase font-semibold">{formatUi(ui.docGenerator.addedFiles, { count: files.length })}</p>
           {files.map((f) => (
             <FileCard
               key={f.id}
@@ -110,26 +111,26 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         </div>
       )}
 
-      {/* 文档大纲设置（可选，章节结构可自定义） */}
+      {/* Document outline settings */}
       <div className="border border-gray-700 rounded-lg overflow-hidden">
         <button
           type="button"
           onClick={() => setShowOutline((v) => !v)}
           className="w-full flex items-center justify-between px-4 py-2 bg-gray-800 hover:bg-gray-700 text-sm text-gray-200 transition-colors"
         >
-          <span>📑 文档大纲设置（可选）</span>
+          <span>📑 {ui.docGenerator.outlineSettings}</span>
           <span className="text-gray-400">{showOutline ? '▲' : '▼'}</span>
         </button>
         {showOutline && (
           <div className="p-4 space-y-3 bg-gray-900/50">
             <div>
-              <p className="text-xs text-gray-400 mb-1">章节标题（每行一个，按顺序生成文档结构）</p>
+              <p className="text-xs text-gray-400 mb-1">{ui.docGenerator.sectionTitles}</p>
               <textarea
                 value={outlineText}
                 onChange={(e) => setOutlineText(e.target.value)}
                 rows={6}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-sm text-gray-200 focus:outline-none focus:border-blue-500 font-mono"
-                placeholder="每行输入一个章节标题..."
+                placeholder={ui.docGenerator.sectionPlaceholder}
               />
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
@@ -139,43 +140,43 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 onChange={(e) => setMergeIntoSingle(e.target.checked)}
                 className="accent-blue-500"
               />
-              将多文件分析结果合并为单一文档
+              {ui.docGenerator.mergeDocuments}
             </label>
             <button
               type="button"
               onClick={() => setOutlineText(DEFAULT_SECTIONS.join('\n'))}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-xs text-gray-200 rounded transition-colors"
             >
-              恢复默认大纲
+              {ui.docGenerator.restoreOutline}
             </button>
           </div>
         )}
       </div>
 
-      {/* 解析提示词设置（可选，指导 AI 的解析思路 / 重点 / 分析设计） */}
+      {/* Parsing instructions */}
       <div className="border border-gray-700 rounded-lg overflow-hidden">
         <button
           type="button"
           onClick={() => setShowParsePrompt((v) => !v)}
           className="w-full flex items-center justify-between px-4 py-2 bg-gray-800 hover:bg-gray-700 text-sm text-gray-200 transition-colors"
         >
-          <span>🧠 解析提示词设置（可选）</span>
+          <span>🧠 {ui.docGenerator.parsePromptSettings}</span>
           <span className="text-gray-400">{showParsePrompt ? '▲' : '▼'}</span>
         </button>
         {showParsePrompt && (
           <div className="p-4 space-y-3 bg-gray-900/50">
             <div>
-              <p className="text-xs text-gray-400 mb-1">全局解析提示词（应用于所有文件，指导 AI 的解析思路、重点与分析设计）</p>
+              <p className="text-xs text-gray-400 mb-1">{ui.docGenerator.globalParsePrompt} — {ui.docGenerator.globalParsePromptHelp}</p>
               <textarea
                 value={parseInstruction}
                 onChange={(e) => setParseInstruction(e.target.value)}
                 rows={5}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-sm text-gray-200 focus:outline-none focus:border-blue-500"
-                placeholder="例如：重点关注硬件规格与电气参数；提取所有引脚定义与信号时序；分析通信协议细节；按模块拆解系统架构..."
+                placeholder={ui.docGenerator.parsePromptPlaceholder}
               />
             </div>
             <p className="text-xs text-gray-500">
-              💡 提示：可在下方每个文件卡片中单独设置该文件的特殊解析提示词（针对不同文件做特殊处理），优先级高于全局提示词。
+              💡 {ui.docGenerator.parsePromptHint}
             </p>
           </div>
         )}
@@ -187,7 +188,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           onClick={handleSelectFiles}
           className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-sm rounded text-gray-200 transition-colors"
         >
-          + 继续添加文件
+          + {ui.docGenerator.addMoreFiles}
         </button>
         <button
           disabled={readyFiles.length === 0 || isStarting}
@@ -205,7 +206,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           }}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm rounded text-white font-medium transition-colors"
         >
-          {isStarting ? '启动中...' : `确认全部，开始工作流 ▶ (${readyFiles.length} 文件)`}
+          {isStarting ? ui.docGenerator.starting : `${formatUi(ui.docGenerator.confirmAndStart, { count: readyFiles.length })} ▶`}
         </button>
       </div>
     </div>
@@ -239,17 +240,17 @@ const FileCard: React.FC<{
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-gray-200 truncate">{file.name}</span>
           <span className={`text-xs ${statusColor}`}>
-            {file.parseStatus === 'pending' && '待解析'}
-            {file.parseStatus === 'parsing' && '正在解析...'}
-            {file.parseStatus === 'done' && '→ AI解析完成'}
-            {file.parseStatus === 'error' && `→ 错误: ${file.parseError}`}
+            {file.parseStatus === 'pending' && ui.docGenerator.parsePending}
+            {file.parseStatus === 'parsing' && ui.docGenerator.parsing}
+            {file.parseStatus === 'done' && `→ ${ui.docGenerator.parseComplete}`}
+            {file.parseStatus === 'error' && `→ ${formatUi(ui.docGenerator.parseError, { message: file.parseError ?? '' })}`}
           </span>
           <button
             onClick={() => setShowInstruction((v) => !v)}
             className={`text-xs shrink-0 transition-colors ${file.parseInstruction?.trim() ? 'text-blue-400' : 'text-gray-500 hover:text-blue-400'}`}
-            title="设置该文件的解析提示词（特殊处理）"
+            title={ui.docGenerator.filePromptTitle}
           >
-            🧠 提示词{file.parseInstruction?.trim() ? ' ✓' : ''}
+            🧠 {ui.docGenerator.filePrompt}{file.parseInstruction?.trim() ? ' ✓' : ''}
           </button>
         </div>
         {showInstruction && (
@@ -259,18 +260,32 @@ const FileCard: React.FC<{
               onChange={(e) => onUpdateInstruction(e.target.value)}
               rows={3}
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded text-xs text-gray-200 focus:outline-none focus:border-blue-500"
-              placeholder="为该文件单独指定解析提示词（特殊处理），留空则使用全局解析提示词..."
+              placeholder={ui.docGenerator.filePromptPlaceholder}
             />
           </div>
         )}
         {file.parseSummary && (
           <p className="text-xs text-gray-400 mt-1 truncate">↳ {file.parseSummary}</p>
         )}
+        {file.parseExtraction && file.parseExtraction.items.length > 0 && (
+          <details className="mt-1">
+            <summary className="cursor-pointer text-xs text-blue-400 hover:text-blue-300">
+              🔎 Extracted information ({file.parseExtraction.items.length})
+            </summary>
+            <ul className="mt-1 max-h-32 space-y-1 overflow-y-auto rounded bg-gray-900 p-2 text-[11px] text-gray-400">
+              {file.parseExtraction.items.slice(0, 10).map((item, index) => (
+                <li key={`${item.title}-${index}`}>
+                  <span className="text-gray-300">[{item.importance}] {item.title}:</span> {item.content}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
       <button
         onClick={onRemove}
         className="text-gray-500 hover:text-red-400 text-sm shrink-0"
-        title="移除"
+        title={ui.common.remove}
       >
         ✕
       </button>

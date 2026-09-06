@@ -1,9 +1,11 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import type { DocumentDraft, ReviewComment } from '../../../../shared/types/document.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 import { normalizeComments, typeIcon, typeLabel, typeColor } from './ReviewCommentsView';
 import { HighlightedTextarea } from './xml/HighlightedTextarea';
 import { XmlHighlight } from './xml/XmlHighlight';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { AiArtifactChat } from './AiArtifactChat';
 
 interface ReviewPanelProps {
   drafts: DocumentDraft[];
@@ -32,6 +34,10 @@ interface ReviewPanelProps {
   leftPanel?: 'comments' | 'original';
   /** Original source drafts shown when `leftPanel === 'original'` (falls back to `drafts`). */
   originalDrafts?: DocumentDraft[];
+  /** Optional AI conversation for refining the active artifact before submit. */
+  onAiEdit?: (currentContent: string, instruction: string) => Promise<string>;
+  /** Label shown in the AI conversation header. */
+  aiArtifactLabel?: string;
 }
 
 /**
@@ -55,8 +61,9 @@ interface ReviewPanelProps {
  *   incidental whitespace, causing silent match failures.
  */
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
-  drafts, comments, onSubmit, title = '人工 Review', submitLabel = '提交，进入下一步 ▶', footerLeft, editorMode = 'markdown',
+  drafts, comments, onSubmit, title = ui.review.defaultTitle, submitLabel = ui.review.defaultSubmit, footerLeft, editorMode = 'markdown',
   leftPanel = 'comments', originalDrafts,
+  onAiEdit, aiArtifactLabel,
 }) => {
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
   const [activeDoc, setActiveDoc] = useState(0);
@@ -286,14 +293,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className={`${leftPanel === 'original' ? 'flex-1 min-w-0' : 'w-80 shrink-0'} border-r border-gray-700 flex flex-col overflow-hidden`}>
           <div className="px-3 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-400">
-              {leftPanel === 'original' ? '📄 原文（只读）' : `AI 审查建议 (${normalizedComments.length} 条)`}
+              {leftPanel === 'original' ? `📄 ${ui.review.sourceReadOnly}` : formatUi(ui.review.aiSuggestions, { count: normalizedComments.length })}
               {leftPanel !== 'original' && accepted.size > 0 && (
-                <span className="ml-1 text-green-400"> · 已接受 {accepted.size} 条</span>
+                <span className="ml-1 text-green-400">{formatUi(ui.review.acceptedCount, { count: accepted.size })}</span>
               )}
             </span>
             {leftPanel !== 'original' && normalizedComments.filter((c) => c.suggestedText).length > 0 && (
               <button onClick={acceptAll} className="text-xs text-blue-400 hover:text-blue-300">
-                接受全部建议
+                {ui.review.acceptAll}
               </button>
             )}
           </div>
@@ -311,7 +318,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           {leftPanel === 'original' ? (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
               {(originalDrafts ?? drafts).length === 0 && (
-                <p className="text-xs text-gray-500 p-4 text-center">暂无原文</p>
+                <p className="text-xs text-gray-500 p-4 text-center">{ui.review.noSource}</p>
               )}
               {(originalDrafts ?? drafts).map((d, i) => (
                 <div key={d.id} className={i === activeDoc ? '' : 'hidden'}>
@@ -327,7 +334,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           ) : (
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
               {normalizedComments.length === 0 && (
-                <p className="text-xs text-gray-500 p-4 text-center">暂无 AI 审查建议</p>
+                <p className="text-xs text-gray-500 p-4 text-center">{ui.review.noSuggestions}</p>
               )}
               {normalizedComments.map((c) => {
                 const status = getCommentStatus(c);
@@ -353,7 +360,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                     <p className="text-gray-300 mb-1.5">{c.explanation}</p>
                     {matchFailed && (
                       <p className="text-[10px] text-yellow-400/90 mb-1.5 italic">
-                        ⚠ 原文未在草稿中精确匹配，无法自动替换。请手动编辑右侧草稿。
+                        ⚠ {ui.review.replacementFailed}
                       </p>
                     )}
 
@@ -381,7 +388,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                                 ? 'bg-green-700 text-white hover:bg-green-800'
                                 : 'bg-green-700/50 text-green-300 hover:bg-green-700'
                             }`}>
-                            {status === 'accepted' ? '✓ 已接受' : '接受'}
+                            {status === 'accepted' ? `✓ ${ui.common.accepted}` : ui.review.accept}
                           </button>
                           <button onClick={() => {
                             if (status === 'accepted') toggleAccept(c);
@@ -391,11 +398,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                                 ? 'bg-red-700/50 text-red-300 hover:bg-red-700'
                                 : 'bg-gray-700 text-gray-400 hover:bg-red-900/50'
                             }`}>
-                            {status === 'accepted' ? '✗ 撤销' : '忽略'}
+                            {status === 'accepted' ? `✗ ${ui.review.undo}` : ui.review.ignore}
                           </button>
                         </>
                       ) : (
-                        <span className="text-xs text-gray-500 italic">仅供查看</span>
+                        <span className="text-xs text-gray-500 italic">{ui.review.viewOnly}</span>
                       )}
                     </div>
                   </div>
@@ -409,14 +416,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="px-3 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
             <span className="text-xs text-gray-400">
-              草稿内容（可直接编辑）
+              {ui.review.draftEditable}
             </span>
             <span className="text-xs text-gray-500">
               {accepted.size > 0 && (
                 <>
-                  <span className="text-green-400">已应用 {accepted.size - failedAcceptIds.length} 条</span>
+                  <span className="text-green-400">{formatUi(ui.review.appliedCount, { count: accepted.size - failedAcceptIds.length })}</span>
                   {failedAcceptIds.length > 0 && (
-                    <span className="text-yellow-400 ml-2">· {failedAcceptIds.length} 条未匹配</span>
+                    <span className="text-yellow-400 ml-2">{formatUi(ui.review.unmatchedCount, { count: failedAcceptIds.length })}</span>
                   )}
                 </>
               )}
@@ -427,7 +434,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               value={effectiveContent}
               onChange={handleManualEdit}
               className="bg-gray-900"
-              placeholder="DITA XML 内容..."
+              placeholder={ui.review.ditaPlaceholder}
             />
           ) : (
             <textarea
@@ -436,14 +443,22 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               onChange={(e) => handleManualEdit(e.target.value)}
             />
           )}
+          {onAiEdit && (
+            <AiArtifactChat
+              currentContent={effectiveContent}
+              onAiEdit={onAiEdit}
+              onApply={handleManualEdit}
+              artifactLabel={aiArtifactLabel}
+            />
+          )}
           <div className="px-4 py-3 border-t border-gray-700 bg-gray-800 flex items-center gap-2">
             {footerLeft ? (
               <div className="mr-auto flex items-center gap-2">{footerLeft}</div>
             ) : (
               <span className="text-xs text-gray-500 mr-auto">
                 {leftPanel === 'original'
-                  ? '可直接编辑右侧译文'
-                  : '接受建议会自动替换原文 · 也可手动编辑'}
+                  ? ui.review.localizedEditHint
+                  : ui.review.applySuggestionHint}
               </span>
             )}
             <button

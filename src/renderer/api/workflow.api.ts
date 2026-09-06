@@ -142,14 +142,29 @@ export const workflowApi = {
     return getElectronApi().workflow.goBack({ projectId, targetStage });
   },
 
-  reviewContinue: (projectId: string, stage: StageName, editedDrafts?: import('../../shared/types/document.types').DocumentDraft[]) => {
-    wfLog('API', 'Sending workflow:reviewContinue', { projectId, stage, hasEditedDrafts: !!editedDrafts });
-    return getElectronApi().workflow.reviewContinue({ projectId, stage, editedDrafts });
+  reviewContinue: (
+    projectId: string,
+    stage: StageName,
+    edits?: Omit<import('../../shared/types/ipc.types').ReviewContinuePayload, 'projectId' | 'stage'>,
+  ) => {
+    wfLog('API', 'Sending workflow:reviewContinue', { projectId, stage, editedFields: Object.keys(edits ?? {}) });
+    return getElectronApi().workflow.reviewContinue({ projectId, stage, ...edits });
   },
 
   aiEditDraft: (projectId: string, currentContent: string, instruction: string) => {
     wfLog('API', 'Sending workflow:aiEditDraft', { projectId, instructionLen: instruction.length });
     return getElectronApi().workflow.aiEditDraft({ projectId, currentContent, instruction });
+  },
+
+  aiEditArtifact: (
+    projectId: string,
+    currentContent: string,
+    instruction: string,
+    format: import('../../shared/types/ipc.types').AiArtifactFormat,
+    stage?: StageName,
+  ) => {
+    wfLog('API', 'Sending workflow:aiEditArtifact', { projectId, stage, format, instructionLen: instruction.length });
+    return getElectronApi().workflow.aiEditArtifact({ projectId, currentContent, instruction, format, stage });
   },
 
   onStream: (cb: (event: WorkflowStreamEvent) => void) =>

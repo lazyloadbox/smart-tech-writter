@@ -4,7 +4,13 @@ import log from 'electron-log';
 import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
 import { DitaLocalizerAgent } from '../agents/dita-localizer.agent';
 import { DitaReviewerAgent } from '../agents/dita-reviewer.agent';
-import { loadPromptOverrides } from '../prompts';
+import {
+  loadPromptOverrides,
+  buildAiEditArtifactSystemPrompt,
+  buildAiEditArtifactUserPrompt,
+  stripAiArtifactEnvelope,
+} from '../prompts';
+import type { AiArtifactFormat } from '../../../shared/types/ipc.types';
 import { validateAndRepairDitaXml } from '../document-builder/dita.builder';
 import type { LocalizeLanguage, DocumentDraft } from '../../../shared/types/document.types';
 import type {
@@ -449,6 +455,30 @@ export class LocalizationService {
     this.stage = 'export';
     this.status = 'done';
     this.persist();
+  }
+
+  /**
+   * Revise a localized artifact from a human confirmation step. This is kept
+   * on the localization service because standalone localization runs do not
+   * have a WorkflowEngine/project thread, but use the same provider and the
+   * same format-safe editing contract.
+   */
+  async aiEditArtifact(
+    currentContent: string,
+    instruction: string,
+    format: AiArtifactFormat,
+  ): Promise<string> {
+    if (!currentContent.trim()) throw new Error('The current artifact is empty.');
+    if (!instruction.trim()) throw new Error('An editing instruction is required.');
+    const messages = [
+      { role: 'system' as const, content: buildAiEditArtifactSystemPrompt(format) },
+      { role: 'user' as const, content: buildAiEditArtifactUserPrompt(instruction, currentContent, format) },
+    ];
+    const result = await this.provider.complete(messages, { maxTokens: 128000 });
+    const cleaned = stripAiArtifactEnvelope(result, format);
+    if (!cleaned) throw new Error('The AI returned no content.');
+    log.info('[Localize] aiEditArtifact completed', { format, resultLen: cleaned.length });
+    return cleaned;
   }
 
   /**

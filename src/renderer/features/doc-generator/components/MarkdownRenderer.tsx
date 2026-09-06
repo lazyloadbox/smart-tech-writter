@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { en as ui } from '../../../../shared/i18n';
 
 interface MarkdownRendererProps {
   content: string;
@@ -104,7 +105,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
   );
 
   if (!content || content.trim().length === 0) {
-    return <span className="text-xs text-gray-500 italic">（暂无内容）</span>;
+    return <span className="text-xs text-gray-500 italic">{ui.common.noContent}</span>;
   }
 
   return (

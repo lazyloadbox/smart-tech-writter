@@ -84,7 +84,7 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       targetLanguage: payload.targetLanguage ?? 'zh-CN',
       skipLocalization: payload.skipLocalization ?? true,
       // If the user edited drafts in Stage 6b, store as humanEditedDrafts so
-      // the pipeline applies them to drafts for subsequent stages (localize, etc.).
+      // the pipeline applies them to drafts for subsequent DITA stages.
       ...(payload.editedDrafts ? { humanEditedDrafts: payload.editedDrafts, humanEdits: payload.editedDrafts[0]?.content ?? '' } : {}),
       // Mark accepted post-edit review comments so downstream stages know.
       postEditReviewComments: (currentState?.postEditReviewComments ?? []).map((c: ReviewComment) => ({
@@ -163,9 +163,19 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       stage: payload.stage,
       hasEditedDrafts: !!payload.editedDrafts,
     });
-    // If edited drafts are provided (e.g. from review_draft AI editing),
-    // apply them to state before resuming so downstream stages use the edits.
-    const resumeData = payload.editedDrafts ? { drafts: payload.editedDrafts } : {};
+    // Apply edits to the state channel that owns the artifact before resuming
+    // so every confirmation step feeds the human-adjusted output downstream.
+    const resumeData = {
+      ...(payload.editedDrafts ? { drafts: payload.editedDrafts } : {}),
+      ...(payload.editedInputFiles ? { inputFiles: payload.editedInputFiles } : {}),
+      ...(payload.editedAnalysisResults ? { analysisResults: payload.editedAnalysisResults } : {}),
+      ...(typeof payload.editedAnalysisSynthesisMarkdown === 'string'
+        ? { analysisSynthesisMarkdown: payload.editedAnalysisSynthesisMarkdown }
+        : {}),
+      ...(payload.editedReferenceSearchResults ? { referenceSearchResults: payload.editedReferenceSearchResults } : {}),
+      ...(payload.editedLocalizedDrafts ? { localizedDrafts: payload.editedLocalizedDrafts } : {}),
+      ...(payload.editedDitaDocuments ? { ditaDocuments: payload.editedDitaDocuments } : {}),
+    };
     engine.resumeFromHumanInput(payload.projectId, resumeData);
     log.info('[WF][IPC] workflow:reviewContinue applied', { projectId: payload.projectId });
   });
@@ -189,6 +199,34 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       return edited;
     } catch (err) {
       log.error('[WF][IPC] workflow:aiEditDraft failed', { projectId: payload.projectId, error: String(err) });
+      throw err;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_AI_EDIT_ARTIFACT, async (_event, payload) => {
+    log.info('[WF][IPC] workflow:aiEditArtifact received', {
+      projectId: payload.projectId,
+      stage: payload.stage,
+      format: payload.format,
+      instructionLen: payload.instruction?.length ?? 0,
+      contentLen: payload.currentContent?.length ?? 0,
+    });
+    try {
+      const edited = await engine.aiEditArtifact(
+        payload.projectId,
+        payload.currentContent ?? '',
+        payload.instruction ?? '',
+        payload.format ?? 'text',
+        payload.stage,
+      );
+      log.info('[WF][IPC] workflow:aiEditArtifact completed', {
+        projectId: payload.projectId,
+        stage: payload.stage,
+        resultLen: edited.length,
+      });
+      return edited;
+    } catch (err) {
+      log.error('[WF][IPC] workflow:aiEditArtifact failed', { projectId: payload.projectId, error: String(err) });
       throw err;
     }
   });

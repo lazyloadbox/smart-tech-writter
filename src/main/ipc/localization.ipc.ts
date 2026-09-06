@@ -10,6 +10,7 @@ import type {
 import type { LocalizationService } from '../modules/localization/localization.service';
 import { allowFileReadMany } from '../modules/security/path-guard';
 import log from 'electron-log';
+import { en as ui } from '../../shared/i18n';
 
 export function registerLocalizationHandlers(service: LocalizationService): void {
   ipcMain.handle(IPC_CHANNELS.LOCALIZE_SELECT_FILES, async (event) => {
@@ -17,10 +18,10 @@ export function registerLocalizationHandlers(service: LocalizationService): void
     const result = await dialog.showOpenDialog(win!, {
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'DITA XML', extensions: ['dita', 'xml'] },
-        { name: 'All Files', extensions: ['*'] },
+        { name: ui.backend.ditaXml, extensions: ['dita', 'xml'] },
+        { name: ui.backend.allFiles, extensions: ['*'] },
       ],
-      title: '选择要翻译的 DITA 文件',
+      title: ui.backend.chooseDitaFiles,
     });
     allowFileReadMany(result.filePaths);
     return result.filePaths;
@@ -99,6 +100,19 @@ export function registerLocalizationHandlers(service: LocalizationService): void
     }
   );
 
+  ipcMain.handle(IPC_CHANNELS.LOCALIZE_AI_EDIT_ARTIFACT, async (_event, payload) => {
+    log.info('[Localize][IPC] localize:aiEditArtifact', {
+      format: payload.format,
+      instructionLen: payload.instruction?.length ?? 0,
+      contentLen: payload.currentContent?.length ?? 0,
+    });
+    return service.aiEditArtifact(
+      payload.currentContent ?? '',
+      payload.instruction ?? '',
+      payload.format ?? 'xml',
+    );
+  });
+
   ipcMain.handle(IPC_CHANNELS.LOCALIZE_GO_BACK, async (_event, payload: LocalizeGoBackPayload) => {
     log.info('[Localize][IPC] localize:goBack', { stage: payload.stage });
     await service.goBackToStage(payload.stage);
@@ -132,7 +146,7 @@ export function registerLocalizationHandlers(service: LocalizationService): void
     const win = BrowserWindow.fromWebContents(event.sender);
     const dirResult = await dialog.showOpenDialog(win!, {
       properties: ['openDirectory', 'createDirectory'],
-      title: '选择导出目录',
+      title: ui.backend.chooseExportDirectory,
     });
     if (dirResult.canceled || dirResult.filePaths.length === 0) return null;
     const destDir = dirResult.filePaths[0];

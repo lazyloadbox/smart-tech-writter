@@ -23,6 +23,7 @@ export const WorkflowStateAnnotation = Annotation.Root({
   projectId: Annotation<string>,
   inputFiles: Annotation<UploadedFile[]>,
   analysisResults: Annotation<AnalysisResult[]>,
+  analysisSynthesisMarkdown: Annotation<string>,
   referenceSearchResults: Annotation<SearchResult[]>,
   drafts: Annotation<DocumentDraft[]>,
   aiReviewComments: Annotation<ReviewComment[]>,

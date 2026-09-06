@@ -3,32 +3,33 @@ import { AiServicePanel } from './components/AiServicePanel';
 import { PromptsPanel } from './components/PromptsPanel';
 import { MappingPanel } from './components/MappingPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
+import { en as ui } from '../../../shared/i18n';
 
 type SettingsSection = 'ai' | 'prompts' | 'mapping' | 'app';
 
 const SECTIONS: { id: SettingsSection; icon: string; label: string; description: string }[] = [
-  { id: 'ai', icon: '🤖', label: 'AI 服务配置', description: 'API Key / Base URL / 模型 / RAG 目录' },
-  { id: 'prompts', icon: '📝', label: '提示词设置', description: '查看并修改所有流程提示词' },
-  { id: 'mapping', icon: '🔁', label: '翻译映射', description: '维护翻译术语映射，支持 Excel 导入' },
-  { id: 'app', icon: '📂', label: '应用目录', description: '查看并打开应用相关目录与文件' },
+  { id: 'ai', icon: '🤖', label: ui.settings.ai, description: ui.settings.aiDescription },
+  { id: 'prompts', icon: '📝', label: ui.settings.prompts, description: ui.settings.promptsDescription },
+  { id: 'mapping', icon: '🔁', label: ui.settings.mapping, description: ui.settings.mappingDescription },
+  { id: 'app', icon: '📂', label: ui.settings.app, description: ui.settings.appDescription },
 ];
 
-/** 设置页：左侧多 tab 导航 + 右侧内容区 */
+/** Settings page with section navigation and a content area. */
 export const SettingsTab: React.FC = () => {
   const [section, setSection] = useState<SettingsSection>('ai');
   const [appVersion, setAppVersion] = useState<string>('');
 
   useEffect(() => {
-    window.electronAPI.app.getVersion().then(setAppVersion).catch(() => {});
+    window.electronAPI.app.getVersion().then(setAppVersion).catch((): void => undefined);
   }, []);
 
   return (
     <div className="flex h-full bg-gray-900">
-      {/* 左侧 Tab 导航 */}
+      {/* Section navigation */}
       <aside className="w-60 shrink-0 border-r border-gray-700 bg-gray-800/60 flex flex-col">
         <div className="px-4 py-4 border-b border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-100">设置</h2>
-          <p className="text-xs text-gray-500 mt-0.5">应用配置与提示词管理</p>
+          <h2 className="text-sm font-semibold text-gray-100">{ui.settings.title}</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{ui.settings.subtitle}</p>
         </div>
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           {SECTIONS.map((s) => (
@@ -55,14 +56,14 @@ export const SettingsTab: React.FC = () => {
             </button>
           ))}
         </nav>
-        {/* 版本信息 */}
+        {/* Version information */}
         <div className="px-4 py-3 border-t border-gray-700">
-          <p className="text-xs text-gray-500">Smart Tech Writer</p>
-          <p className="text-xs text-gray-600 mt-0.5">v{appVersion || '...'}</p>
+          <p className="text-xs text-gray-500">{ui.common.productName}</p>
+          <p className="text-xs text-gray-600 mt-0.5">{appVersion ? `v${appVersion}` : ui.common.notAvailable}</p>
         </div>
       </aside>
 
-      {/* 右侧内容区 */}
+      {/* Content area */}
       <main className="flex-1 overflow-y-auto">
         {section === 'mapping' && <MappingPanel />}
         {section === 'ai' && <AiServicePanel />}

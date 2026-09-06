@@ -1,13 +1,15 @@
 import log from 'electron-log';
+import { en as ui } from '../../../shared/i18n';
 import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { DocumentOutline } from '../../../shared/types/document.types';
 import { buildSystemPrompt, type PromptDefinition, type PromptOverride, type PromptOverrides } from '../prompts';
+import type { StructuredOutputContract } from '../ai-providers/output-contracts';
+import { toResponseFormat } from '../ai-providers/output-contracts';
 
 export interface AgentConfig {
   /**
-   * 细粒度提示词覆盖：可整体（system）或按部分（role/task/outputFormat）
-   * 覆盖 system prompt。优先级高于 systemPromptTemplate。
+   * 用户可编辑的角色与补充指令覆盖；输出协议不在此配置中。
    */
   promptOverride?: PromptOverride;
   /**
@@ -15,8 +17,7 @@ export interface AgentConfig {
    */
   promptOverrides?: PromptOverrides;
   /**
-   * 兼容旧接口：整体覆盖 system prompt（等价于 promptOverride.system）。
-   * 建议改用 promptOverride 以获得细粒度覆盖能力。
+   * 兼容旧接口：作为补充指令处理，不再覆盖系统输出协议。
    */
   systemPromptTemplate?: string;
   /** 文档大纲（仅 WriterAgent 使用）：自定义章节结构，不再固定模板。 */
@@ -38,6 +39,7 @@ export interface CallLLMOptions {
   model?: string;
   signal?: AbortSignal;
   maxTokens?: number;
+  responseFormat?: import('../ai-providers/base.provider').ResponseFormat;
 }
 
 export abstract class BaseAgent {
@@ -52,13 +54,12 @@ export abstract class BaseAgent {
   abstract execute(state: DocGenState): Promise<Partial<DocGenState>>;
 
   /**
-   * 根据提示词定义与配置中的覆盖项构建 system prompt。
-   * 覆盖优先级：promptOverride.system > promptOverride 逐部分 > systemPromptTemplate（旧接口）> 默认定义。
+   * 根据提示词定义与配置中的可编辑覆盖项构建 system prompt。
    */
   protected buildSystemPrompt(def: PromptDefinition): string {
     const override: PromptOverride | undefined =
       this.config.promptOverride ??
-      (this.config.systemPromptTemplate ? { system: this.config.systemPromptTemplate } : undefined);
+      (this.config.systemPromptTemplate ? { instructions: this.config.systemPromptTemplate } : undefined);
     return buildSystemPrompt(def, override);
   }
 
@@ -91,7 +92,7 @@ export abstract class BaseAgent {
 
     if (this._streamCallback) {
       let full = '';
-      for await (const chunk of this.provider.streamDetailed(messages, { model: opts.model, signal, maxTokens })) {
+      for await (const chunk of this.provider.streamDetailed(messages, { model: opts.model, signal, maxTokens, responseFormat: opts.responseFormat })) {
         if (chunk.type === 'content') full += chunk.text;
         this._streamCallback(chunk);
       }
@@ -107,11 +108,90 @@ export abstract class BaseAgent {
         this._streamCallback({ type: 'content', text: retry });
         return retry;
       }
-      throw new Error(
-        `AI 返回内容为空（模型 ${opts.model ?? '默认'} 可能将输出预算耗尽在推理过程）。请重试或更换模型。`
-      );
+      throw new Error(`${ui.backend.aiEmpty} Model: ${opts.model ?? 'default'}.`);
     }
 
-    return this.provider.complete(messages, { model: opts.model, signal, maxTokens });
+    return this.provider.complete(messages, { model: opts.model, signal, maxTokens, responseFormat: opts.responseFormat });
   }
+
+  /** Call an LLM with a fixed application-owned JSON contract and validate it. */
+  protected async callStructuredLLM<T>(
+    userPrompt: string,
+    contract: StructuredOutputContract<T>,
+    opts: CallLLMOptions = {},
+  ): Promise<T> {
+    const responseFormat = toResponseFormat(contract as StructuredOutputContract<unknown>);
+    let response: string;
+    let providerSupportsStructured = true;
+    try {
+      response = await this.callLLM(userPrompt, { ...opts, responseFormat });
+    } catch (error) {
+      // OpenAI-compatible endpoints vary in their support for JSON Schema.
+      // Fall back only for format-capability errors; auth/network failures
+      // should still fail the workflow immediately.
+      if (!isUnsupportedStructuredOutputError(error)) throw error;
+      log.warn('[WF][AI] Structured output unsupported; falling back to prompt-enforced JSON', {
+        agent: this.constructor.name,
+        contract: contract.name,
+      });
+      providerSupportsStructured = false;
+      response = await this.callLLM(userPrompt, opts);
+    }
+
+    const parsed = contract.parse(parseJsonValue(response));
+    if (parsed !== null) return parsed;
+
+    const repairPrompt = `The previous response did not match the required application schema. Return ONLY valid JSON matching the fixed output contract. Do not explain the correction.\n\nPrevious response:\n${response}`;
+    const retry = await this.callLLM(
+      repairPrompt,
+      providerSupportsStructured ? { ...opts, responseFormat } : opts,
+    );
+    const repaired = contract.parse(parseJsonValue(retry));
+    if (repaired !== null) return repaired;
+    throw new Error(`${ui.backend.aiInvalidStructuredOutput} Contract: ${contract.name}.`);
+  }
+}
+
+function parseJsonValue(response: string): unknown {
+  const text = response.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== '[' && text[i] !== '{') continue;
+      const end = findJsonEnd(text, i);
+      if (end < 0) continue;
+      try { return JSON.parse(text.slice(i, end + 1)) as unknown; } catch { /* try next candidate */ }
+    }
+    return null;
+  }
+}
+
+function findJsonEnd(text: string, start: number): number {
+  const stack: string[] = [];
+  let quoted = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') quoted = false;
+      continue;
+    }
+    if (ch === '"') { quoted = true; continue; }
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') {
+      const expected = ch === '}' ? '{' : '[';
+      if (stack.pop() !== expected) return -1;
+      if (stack.length === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function isUnsupportedStructuredOutputError(error: unknown): boolean {
+  const candidate = error as { status?: number; message?: string } | undefined;
+  const message = String(candidate?.message ?? error).toLowerCase();
+  return candidate?.status === 400 && /response.?format|json.?schema|structured output|unsupported/.test(message);
 }

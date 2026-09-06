@@ -1,32 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import type { WorkflowLogEntry } from '../../../../shared/types/workflow.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 
 interface LogViewerProps {
   logs: WorkflowLogEntry[];
 }
-
-const STAGE_LABELS_SHORT: Record<string, string> = {
-  upload_parse: '解析',
-  review_upload: '确认解析',
-  ingest: '汇总',
-  analyze: '分析',
-  review_analyze: '确认分析',
-  draft: '草稿',
-  review_draft: '审阅草稿',
-  ai_review: '审查',
-  human_review: '人工审查',
-  post_edit_review: '编辑后审查',
-  human_confirm: '确认',
-  localize: '本地化',
-  review_localize: '审阅本地化',
-  localize_ai_review: '本地化审查',
-  human_localize_review: '人工本地审查',
-  dita_build: '生成 DITA',
-  review_dita: '审阅 DITA',
-  dita_ai_review: 'DITA 审查',
-  human_dita_review: '人工 DITA 审查',
-  export: '导出',
-};
 
 const LEVEL_STYLES: Record<string, string> = {
   info: 'text-gray-300',
@@ -72,9 +50,9 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
           {isExpanded ? '▼' : '▶'}
         </span>
         <span className="text-xs font-medium text-gray-300">
-          📋 工作流日志
+          📋 {ui.logs.title}
         </span>
-        <span className="text-xs text-gray-500">({logs.length} 条)</span>
+        <span className="text-xs text-gray-500">({formatUi(ui.logs.count, { count: logs.length })})</span>
         {!isExpanded && lastLog && (
           <span className={`text-xs truncate ml-2 ${LEVEL_STYLES[lastLog.level] ?? 'text-gray-400'}`}>
             — {lastLog.message}
@@ -94,7 +72,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
                 onChange={(e) => setAutoScroll(e.target.checked)}
                 className="w-3 h-3"
               />
-              自动滚动
+              {ui.logs.autoScroll}
             </label>
             <button
               onClick={() => {
@@ -104,7 +82,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
               }}
               className="text-xs text-blue-400 hover:text-blue-300"
             >
-              滚动到底部
+              {ui.logs.scrollToBottom}
             </button>
           </div>
 
@@ -116,7 +94,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
           >
             {logs.length === 0 ? (
               <div className="px-4 py-8 text-center text-xs text-gray-500">
-                暂无日志，启动工作流后将在此显示详细过程
+                {ui.logs.empty}
               </div>
             ) : (
               <div className="font-mono text-[11px] leading-relaxed">
@@ -126,14 +104,14 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
                     className="flex items-start gap-2 px-4 py-0.5 hover:bg-gray-800/50 border-b border-gray-800 last:border-0"
                   >
                     <span className="text-gray-600 shrink-0 w-16 text-right">
-                      {new Date(entry.timestamp).toLocaleTimeString('zh-CN', {
+                      {new Date(entry.timestamp).toLocaleTimeString('en-US', {
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
                       })}
                     </span>
                     <span className="text-gray-600 shrink-0 w-16 text-center">
-                      [{STAGE_LABELS_SHORT[entry.stage] ?? entry.stage}]
+                      [{ui.workflow.shortStages[entry.stage as keyof typeof ui.workflow.shortStages] ?? entry.stage}]
                     </span>
                     <span className="shrink-0">{LEVEL_ICONS[entry.level] ?? '·'}</span>
                     <span className={LEVEL_STYLES[entry.level] ?? 'text-gray-400'}>

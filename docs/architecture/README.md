@@ -20,6 +20,7 @@
 | [07](07-renderer.md) | 渲染进程（UI） | 4 Tab 组件树、Zustand 状态管理、各功能视图 |
 | [08](08-data-models.md) | 数据模型与状态流转 | 共享类型系统、DocGenState 全字段、数据生命周期 |
 | [09](09-dependencies.md) | 技术栈与依赖库详解 | 依赖库的版本、用途与使用位置 |
+| [10](10-human-ai-artifact-editing.md) | 人机对话式产出物编辑 | 全部人工确认 step 的分析、格式与状态写回 |
 
 ## 全景架构速览
 

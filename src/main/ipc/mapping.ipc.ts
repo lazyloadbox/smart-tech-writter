@@ -13,6 +13,7 @@ import type {
 } from '../../shared/types/ipc.types';
 import type { MappingImportRow } from '../../shared/types/mapping.types';
 import type { MappingService } from '../modules/localization/mapping.service';
+import { en as ui, formatUi } from '../../shared/i18n';
 
 /** Common header names for the first column — when matched, the first row is skipped. */
 const HEADER_RE =
@@ -122,7 +123,7 @@ export async function parseMappingFile(filePath: string): Promise<MappingImportR
   if (ext === '.csv') {
     return parseCsvFile(filePath);
   }
-  throw new Error(`不支持的文件格式：${ext || '(无扩展名)'}（仅支持 .xlsx / .csv）`);
+  throw new Error(formatUi(ui.backend.unsupportedMappingFormat, { extension: ext || '(no extension)' }));
 }
 
 export function registerMappingHandlers(service: MappingService): void {
@@ -158,10 +159,10 @@ export function registerMappingHandlers(service: MappingService): void {
       properties: ['openFile'],
       filters: [
         { name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] },
-        { name: 'Excel 工作簿', extensions: ['xlsx', 'xls'] },
+        { name: ui.backend.excelWorkbook, extensions: ['xlsx', 'xls'] },
         { name: 'CSV', extensions: ['csv'] },
       ],
-      title: '选择要导入的翻译映射文件（第一列=英文，第二列=简体中文，第三列=台湾繁体）',
+      title: ui.backend.chooseGlossaryFile,
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];

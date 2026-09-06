@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { en as ui } from '../../../../shared/i18n';
 
 interface CollapsibleSectionProps {
   title: string;
@@ -33,7 +34,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           {title}
         </span>
         <span className="text-[10px] text-gray-600 ml-auto">
-          {expanded ? '点击折叠' : '点击展开'}
+          {expanded ? ui.common.collapse : ui.common.expand}
         </span>
       </button>
       {expanded && <div className="mt-1">{children}</div>}

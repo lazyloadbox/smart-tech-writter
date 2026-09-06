@@ -1,4 +1,5 @@
 import type { DocumentDraft } from '../../../shared/types/document.types';
+import { en as ui, formatUi } from '../../../shared/i18n';
 
 /**
  * Simple DITA topic builder — converts a Markdown draft into a DITA 1.3 concept topic.
@@ -317,7 +318,7 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
   const text = xml ?? '';
 
   if (!text.trim().startsWith('<?xml')) {
-    errors.push('缺少 XML 声明 (<?xml ... ?>)');
+    errors.push(ui.backend.missingXmlDeclaration);
   }
 
   // Find all tags (opening, closing, self-closing, processing instructions,
@@ -344,20 +345,20 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
     const between = text.slice(lastTagEnd, match.index);
     const badAmp = between.match(/&(?!(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][\w.]*);)/g);
     if (between.includes('<') || (badAmp && badAmp.length > 0)) {
-      errors.push(`文本内容包含未转义的特殊字符: "${between.slice(0, 40)}..."`);
+      errors.push(formatUi(ui.backend.unescapedXmlCharacters, { text: between.slice(0, 40) }));
     }
 
     if (full.startsWith('</')) {
       const open = stack.pop();
       if (open !== tagName) {
-        errors.push(`标签不匹配: </${tagName}> (期望 </${open ?? '无'}> 关闭)`);
+        errors.push(formatUi(ui.backend.mismatchedXmlTag, { tag: tagName, open: open ?? 'none' }));
       }
     } else if (!selfClosing) {
       // Only the first element at depth 0 is the root.
       if (stack.length === 0) {
         rootCount++;
         if (rootCount > 1) {
-          errors.push(`存在多个根元素: <${tagName}>`);
+          errors.push(formatUi(ui.backend.multipleXmlRoots, { tag: tagName }));
         }
       }
       stack.push(tagName);
@@ -366,7 +367,7 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
   }
 
   if (stack.length > 0) {
-    errors.push(`存在未闭合的标签: ${stack.join(', ')}`);
+    errors.push(formatUi(ui.backend.unclosedXmlTags, { tags: stack.join(', ') }));
   }
 
   return { valid: errors.length === 0, errors };

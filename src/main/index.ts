@@ -9,6 +9,7 @@ import { WorkflowEngine } from './modules/workflow/index';
 import { LocalizationService } from './modules/localization/localization.service';
 import { MappingService } from './modules/localization/mapping.service';
 import { registerAllIpcHandlers } from './ipc/index';
+import { en as ui } from '../shared/i18n';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -39,7 +40,7 @@ function createWindow(): void {
       nodeIntegration: false,
     },
     titleBarStyle: 'default',
-    title: 'Smart Tech Writer',
+    title: ui.common.productName,
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -68,6 +69,7 @@ function initializeServices(): void {
     apiKey,
     baseURL: baseURL ?? undefined,
     defaultModel: getSetting('openai.model') ?? 'gpt-4o',
+    reasoningEffort: (getSetting('openai.reasoningEffort') as 'none' | 'low' | 'medium' | 'high' | null) ?? 'medium',
   });
 
   // Build RAG service (semantic index with keyword fallback)
@@ -84,7 +86,7 @@ function initializeServices(): void {
   // Register all IPC handlers
   registerAllIpcHandlers(workflowEngine, ragService, localizationService, mappingService);
 
-  log.info('Smart Tech Writer services initialized');
+  log.info(`${ui.common.productName} services initialized`);
 }
 
 app.on('ready', () => {

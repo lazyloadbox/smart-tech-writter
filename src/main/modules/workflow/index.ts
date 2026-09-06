@@ -13,7 +13,17 @@ import { buildWorkflowGraph } from './langgraph/graph';
 import { getCheckpointer } from './langgraph/checkpointer';
 import { WorkflowEmitterImpl } from './langgraph/emitter';
 import type { WorkflowGraphState } from './langgraph/graph-state';
-import { DEFAULT_DOCUMENT_OUTLINE, PROMPTS, buildAiEditDraftUserPrompt, buildSystemPrompt, loadPromptOverrides } from '../prompts';
+import {
+  DEFAULT_DOCUMENT_OUTLINE,
+  PROMPTS,
+  buildAiEditDraftUserPrompt,
+  buildAiEditArtifactSystemPrompt,
+  buildAiEditArtifactUserPrompt,
+  buildSystemPrompt,
+  loadPromptOverrides,
+  stripAiArtifactEnvelope,
+} from '../prompts';
+import type { AiArtifactFormat } from '../../../shared/types/ipc.types';
 
 /**
  * WorkflowEngine — LangGraph-backed facade.
@@ -42,6 +52,8 @@ export class WorkflowEngine {
   private running = new Set<string>();
   /** AbortControllers for in-flight invokes (used by go-back / pause during RUNNING). */
   private abortControllers = new Map<string, AbortController>();
+  /** AbortControllers for direct human↔AI artifact editing requests. */
+  private artifactAbortControllers = new Map<string, AbortController>();
 
   constructor(provider: AIProvider, ragService: DocumentSearchService) {
     this.provider = provider;
@@ -79,6 +91,7 @@ export class WorkflowEngine {
         parseInstruction: fileInstructions?.[p]?.trim() || undefined,
       })),
       analysisResults: [],
+      analysisSynthesisMarkdown: '',
       referenceSearchResults: [],
       drafts: [],
       aiReviewComments: [],
@@ -91,10 +104,10 @@ export class WorkflowEngine {
       ditaReviewComments: [],
       outputDocuments: [],
       ingestContext: '',
-      targetLanguage: 'zh-CN',
+      targetLanguage: 'en',
       documentOutline: outline ?? DEFAULT_DOCUMENT_OUTLINE,
       parseInstruction,
-      // Default to skipping localization — the standalone 本地化 feature handles DITA translation.
+      // Gen Doc no longer has a localization branch; the standalone localization feature handles DITA translation.
       skipLocalization: true,
       workflowLogs: [],
       currentStage: 'upload_parse',
@@ -188,7 +201,7 @@ export class WorkflowEngine {
 
     const emitter = this.makeEmitter(projectId);
     emitter.setStatus('RUNNING');
-    emitter.emitProgress(targetStage, `↩ 回退到阶段: ${targetStage}`);
+    emitter.emitProgress(targetStage, `↩ Returned to stage: ${targetStage}`);
     const config = {
       configurable: {
         thread_id: projectId,
@@ -239,15 +252,20 @@ export class WorkflowEngine {
     log.info('[WF][Engine] pauseWorkflow aborting in-flight invoke', { projectId });
     const ac = this.abortControllers.get(projectId);
     if (ac) ac.abort();
+    this.artifactAbortControllers.get(projectId)?.abort();
+    // Surface the paused state immediately. The invoke is prevented from
+    // hydrating or advancing after its signal is aborted below.
+    const paused = { ...state, status: 'PAUSED:USER' as WorkflowStatus };
+    this.stateCache.set(projectId, paused);
+    this.persistMirror(paused);
+    const pauseEmitter = this.makeEmitter(projectId);
+    pauseEmitter.setStatus('PAUSED:USER');
+    pauseEmitter.emitProgress(paused.currentStage, 'AI request cancelled. Workflow paused.');
     let waited = 0;
     while (this.running.has(projectId) && waited < 10000) {
       await new Promise((r) => setTimeout(r, 25));
       waited += 25;
     }
-    const s = this.stateCache.get(projectId) ?? state;
-    const paused = { ...s, status: 'PAUSED:USER' as WorkflowStatus };
-    this.stateCache.set(projectId, paused);
-    this.persistMirror(paused);
     log.info('[WF][Engine] pauseWorkflow applied', { projectId, stage: paused.currentStage });
   }
 
@@ -273,6 +291,8 @@ export class WorkflowEngine {
     log.info('[WF][Engine] deleteProject requested', { projectId });
     const ac = this.abortControllers.get(projectId);
     if (ac) ac.abort();
+    this.artifactAbortControllers.get(projectId)?.abort();
+    this.artifactAbortControllers.delete(projectId);
     this.running.delete(projectId);
     this.abortControllers.delete(projectId);
     this.stateCache.delete(projectId);
@@ -300,21 +320,73 @@ export class WorkflowEngine {
       { role: 'user' as const, content: userPrompt },
     ];
 
-    let full = '';
-    for await (const chunk of this.provider.streamDetailed(messages, { maxTokens: 128000 })) {
-      if (chunk.type === 'content') full += chunk.text;
-      this.emitStream(projectId, 'review_draft', chunk);
-    }
-    if (full.trim().length === 0) {
-      // Reasoning models may return empty streamed content — retry non-streaming.
-      log.warn('[WF][Engine] aiEditDraft stream empty — retrying via complete()', { projectId });
-      full = await this.provider.complete(messages, { maxTokens: 128000 });
-      if (full.trim().length > 0) {
-        this.emitStream(projectId, 'review_draft', { type: 'content', text: full });
+    const controller = this.replaceArtifactController(projectId);
+    try {
+      let full = '';
+      for await (const chunk of this.provider.streamDetailed(messages, { maxTokens: 128000, signal: controller.signal })) {
+        if (controller.signal.aborted) throw createAbortError();
+        if (chunk.type === 'content') full += chunk.text;
+        this.emitStream(projectId, 'review_draft', chunk);
       }
+      if (full.trim().length === 0) {
+        // Reasoning models may return empty streamed content — retry non-streaming.
+        log.warn('[WF][Engine] aiEditDraft stream empty — retrying via complete()', { projectId });
+        full = await this.provider.complete(messages, { maxTokens: 128000, signal: controller.signal });
+        if (full.trim().length > 0) {
+          this.emitStream(projectId, 'review_draft', { type: 'content', text: full });
+        }
+      }
+      log.info('[WF][Engine] aiEditDraft completed', { projectId, resultLen: full.length });
+      return full;
+    } finally {
+      this.clearArtifactController(projectId, controller);
     }
-    log.info('[WF][Engine] aiEditDraft completed', { projectId, resultLen: full.length });
-    return full;
+  }
+
+  /**
+   * AI-assisted editing for every human confirmation checkpoint. Unlike the
+   * legacy draft-only helper, this preserves the artifact's declared format
+   * (structured JSON, Markdown, XML, or plain text) and attributes streamed
+   * output to the checkpoint that requested it.
+   */
+  async aiEditArtifact(
+    projectId: string,
+    currentContent: string,
+    instruction: string,
+    format: AiArtifactFormat,
+    stage: StageName = 'review_draft',
+  ): Promise<string> {
+    log.info('[WF][Engine] aiEditArtifact requested', {
+      projectId,
+      stage,
+      format,
+      instructionLen: instruction.length,
+      contentLen: currentContent.length,
+    });
+    const messages = [
+      { role: 'system' as const, content: buildAiEditArtifactSystemPrompt(format) },
+      { role: 'user' as const, content: buildAiEditArtifactUserPrompt(instruction, currentContent, format) },
+    ];
+
+    const controller = this.replaceArtifactController(projectId);
+    try {
+      let full = '';
+      for await (const chunk of this.provider.streamDetailed(messages, { maxTokens: 128000, signal: controller.signal })) {
+        if (controller.signal.aborted) throw createAbortError();
+        if (chunk.type === 'content') full += chunk.text;
+        this.emitStream(projectId, stage, chunk);
+      }
+      if (full.trim().length === 0) {
+        log.warn('[WF][Engine] aiEditArtifact stream empty — retrying via complete()', { projectId, stage });
+        full = await this.provider.complete(messages, { maxTokens: 128000, signal: controller.signal });
+        if (full.trim().length > 0) this.emitStream(projectId, stage, { type: 'content', text: full });
+      }
+      const cleaned = stripAiArtifactEnvelope(full, format);
+      log.info('[WF][Engine] aiEditArtifact completed', { projectId, stage, format, resultLen: cleaned.length });
+      return cleaned;
+    } finally {
+      this.clearArtifactController(projectId, controller);
+    }
   }
 
   // --- internals ---
@@ -331,6 +403,19 @@ export class WorkflowEngine {
         this.stateCache.set(projectId, { ...cached, currentStage: entry.stage, status });
       }
     });
+  }
+
+  private replaceArtifactController(projectId: string): AbortController {
+    this.artifactAbortControllers.get(projectId)?.abort();
+    const controller = new AbortController();
+    this.artifactAbortControllers.set(projectId, controller);
+    return controller;
+  }
+
+  private clearArtifactController(projectId: string, controller: AbortController): void {
+    if (this.artifactAbortControllers.get(projectId) === controller) {
+      this.artifactAbortControllers.delete(projectId);
+    }
   }
 
   private async runInvoke(projectId: string, input: unknown, opts: { start?: boolean; resume?: unknown; continue?: boolean }): Promise<void> {
@@ -366,9 +451,11 @@ export class WorkflowEngine {
       } else {
         await this.graph.invoke(new Command({ resume: opts.resume }), config);
       }
-      await this.hydrate(projectId);
+      // An aborted request must never advance or overwrite the paused state,
+      // even if a compatible OpenAI endpoint resolves its stream late.
+      if (!ac.signal.aborted) await this.hydrate(projectId);
     } catch (err) {
-      if ((err as Error)?.name === 'AbortError') {
+      if (ac.signal.aborted || (err as Error)?.name === 'AbortError') {
         log.info('[WF][Engine] Invoke aborted', { projectId });
         emitter.setActive(false);
       } else {
@@ -404,6 +491,7 @@ export class WorkflowEngine {
     }
     const state: DocGenState = {
       ...values,
+      analysisSynthesisMarkdown: values.analysisSynthesisMarkdown ?? '',
       workflowLogs: this.logs.get(projectId) ?? [],
       status,
       currentStage,
@@ -448,10 +536,11 @@ export class WorkflowEngine {
       if (!row) return null;
       const state = JSON.parse(row.state_json) as DocGenState;
       // Backfill fields added after initial release so old persisted states
-      // don't break the pipeline (skipLocalization defaults to true).
+      // Keep the legacy field populated for persisted-state compatibility.
       if (typeof state.skipLocalization !== 'boolean') state.skipLocalization = true;
       if (!Array.isArray(state.humanEditedDrafts)) state.humanEditedDrafts = [];
       if (typeof state.ingestContext !== 'string') state.ingestContext = '';
+      if (typeof state.analysisSynthesisMarkdown !== 'string') state.analysisSynthesisMarkdown = '';
       if (!state.documentOutline) state.documentOutline = DEFAULT_DOCUMENT_OUTLINE;
       this.stateCache.set(projectId, state);
       return state;
@@ -471,4 +560,10 @@ export class WorkflowEngine {
       }
     }
   }
+}
+
+function createAbortError(): Error {
+  const error = new Error('AI request aborted');
+  error.name = 'AbortError';
+  return error;
 }

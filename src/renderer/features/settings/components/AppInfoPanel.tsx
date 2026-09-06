@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import type { AppPaths } from '../../../../shared/types/ipc.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 
 interface PathRow {
   key: keyof AppPaths;
   icon: string;
   label: string;
   description: string;
-  /** 是否为文件（文件在资源管理器中定位，目录直接打开） */
+  /** Whether the item is a file (locate it) or a directory (open it). */
   isFile?: boolean;
 }
 
@@ -14,44 +15,44 @@ const PATH_ROWS: PathRow[] = [
   {
     key: 'appPath',
     icon: '🚀',
-    label: '应用执行目录',
-    description: '应用安装 / 程序所在目录',
+    label: ui.settings.appPaths.appPath.label,
+    description: ui.settings.appPaths.appPath.description,
   },
   {
     key: 'userData',
     icon: '⚙️',
-    label: '设置与数据目录',
-    description: '应用配置、数据库、项目文件等均存放于此',
+    label: ui.settings.appPaths.userData.label,
+    description: ui.settings.appPaths.userData.description,
   },
   {
     key: 'databasePath',
     icon: '🗄️',
-    label: '主数据库文件',
-    description: 'SQLite 数据库（smart-tech-writer.db），保存设置、项目与 RAG 索引',
+    label: ui.settings.appPaths.databasePath.label,
+    description: ui.settings.appPaths.databasePath.description,
     isFile: true,
   },
   {
     key: 'langgraphDbPath',
     icon: '🔖',
-    label: '工作流检查点数据库',
-    description: 'LangGraph 检查点（langgraph.db），用于暂停 / 恢复 / 回退',
+    label: ui.settings.appPaths.langgraphDbPath.label,
+    description: ui.settings.appPaths.langgraphDbPath.description,
     isFile: true,
   },
   {
     key: 'projectsDir',
     icon: '📁',
-    label: '项目文件目录',
-    description: '每个项目的解析结果、草稿与输出文档存放目录',
+    label: ui.settings.appPaths.projectsDir.label,
+    description: ui.settings.appPaths.projectsDir.description,
   },
   {
     key: 'logsDir',
     icon: '📜',
-    label: '日志目录',
-    description: '应用运行日志（electron-log）',
+    label: ui.settings.appPaths.logsDir.label,
+    description: ui.settings.appPaths.logsDir.description,
   },
 ];
 
-/** 应用目录信息面板（设置页「应用目录」tab） */
+/** Application data and path information panel. */
 export const AppInfoPanel: React.FC = () => {
   const [paths, setPaths] = useState<AppPaths | null>(null);
   const [error, setError] = useState<string>('');
@@ -81,15 +82,15 @@ export const AppInfoPanel: React.FC = () => {
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-gray-100">应用目录</h2>
+        <h2 className="text-xl font-semibold text-gray-100">{ui.settings.appInfoTitle}</h2>
         <p className="text-xs text-gray-500 mt-1">
-          查看本应用相关的目录与文件位置，点击「打开」可在资源管理器中快速定位。
+          {ui.settings.appInfoDescription}
         </p>
       </div>
 
       {error && (
         <div className="px-3 py-2 bg-red-900/40 border border-red-700 rounded text-sm text-red-300">
-          加载失败：{error}
+          {formatUi(ui.settings.loadFailed, { error })}
         </div>
       )}
 
@@ -107,7 +108,7 @@ export const AppInfoPanel: React.FC = () => {
                   <span className="text-sm font-medium text-gray-200">{row.label}</span>
                   {row.isFile && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-300 border border-blue-500/30">
-                      文件
+                      {ui.settings.file}
                     </span>
                   )}
                 </div>
@@ -116,7 +117,7 @@ export const AppInfoPanel: React.FC = () => {
                   className="text-xs font-mono text-gray-400 mt-1 truncate"
                   title={value}
                 >
-                  {value || '...'}
+                  {value || ui.common.notAvailable}
                 </p>
               </div>
               <button
@@ -124,7 +125,7 @@ export const AppInfoPanel: React.FC = () => {
                 disabled={!value || opening === row.key}
                 className="shrink-0 px-3 py-1.5 bg-gray-700 hover:bg-blue-600 disabled:opacity-40 text-xs text-gray-100 rounded transition-colors"
               >
-                {opening === row.key ? '打开中...' : '打开'}
+                {opening === row.key ? ui.settings.opening : ui.settings.openItem}
               </button>
             </div>
           );
@@ -132,7 +133,7 @@ export const AppInfoPanel: React.FC = () => {
       </section>
 
       <p className="text-xs text-gray-600">
-        提示：数据库文件正在被应用使用时，请勿直接修改；如需备份，可先退出应用再复制。
+        {ui.settings.appInfoWarning}
       </p>
     </div>
   );

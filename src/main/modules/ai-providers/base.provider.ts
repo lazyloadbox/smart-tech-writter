@@ -9,7 +9,17 @@ export interface CompletionOptions {
   maxTokens?: number;
   /** AbortSignal to cancel an in-flight request (pause / go-back). */
   signal?: AbortSignal;
+  /** Optional provider-level structured output contract. */
+  responseFormat?: ResponseFormat;
+  /** Optional reasoning budget. Unsupported models must receive no field. */
+  reasoningEffort?: ReasoningEffort;
 }
+
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+
+export type ResponseFormat =
+  | { type: 'json_object' }
+  | { type: 'json_schema'; json_schema: { name: string; schema: Record<string, unknown>; strict?: boolean } };
 
 export type AIStreamChunkType = 'thinking' | 'content';
 
@@ -39,6 +49,7 @@ export interface ProviderConfig {
   apiKey: string;
   baseURL?: string;
   defaultModel?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export type ProviderType = 'openai' | 'anthropic' | 'ollama';

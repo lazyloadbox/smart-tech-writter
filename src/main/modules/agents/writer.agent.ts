@@ -7,6 +7,7 @@ import {
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { DocumentOutline } from '../../../shared/types/document.types';
 import { v4 as uuidv4 } from 'uuid';
+import { en as ui } from '../../../shared/i18n';
 
 export class WriterAgent extends BaseAgent {
   get systemPrompt(): string {
@@ -33,12 +34,12 @@ export class WriterAgent extends BaseAgent {
     if (analysisResults.length === 0) {
       // Fallback: no analysis results — emit a single generic draft so the
       // pipeline can still proceed.
-      const prompt = buildWriterPrompt(analysisResults, state.ingestContext || 'No analysis available.', outline);
+      const prompt = buildWriterPrompt(analysisResults, state.ingestContext || 'No analysis available.', outline, state.analysisSynthesisMarkdown);
       const content = await this.callLLM(prompt);
       return {
         drafts: [{
           id: uuidv4(),
-          title: '技术文档草稿',
+          title: ui.docGenerator.fallbackDraftTitle,
           content,
           createdAt: now,
           updatedAt: now,
@@ -46,12 +47,12 @@ export class WriterAgent extends BaseAgent {
       };
     }
 
-    const prompt = buildWriterPrompt(analysisResults, state.ingestContext, outline);
+    const prompt = buildWriterPrompt(analysisResults, state.ingestContext, outline, state.analysisSynthesisMarkdown);
     const content = await this.callLLM(prompt);
     return {
       drafts: [{
         id: uuidv4(),
-        title: '综合技术文档',
+        title: ui.docGenerator.combinedDraftTitle,
         content,
         createdAt: now,
         updatedAt: now,

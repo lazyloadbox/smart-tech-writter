@@ -3,6 +3,7 @@ import { useLocalizationStore } from '../../../stores/localization.store';
 import { localizationApi } from '../../../api/localization.api';
 import type { LocalizeLanguage, DocumentDraft, ReviewComment } from '../../../../shared/types/document.types';
 import type { LocalizationStage } from '../../../../shared/types/localization.types';
+import { en as ui } from '../../../../shared/i18n';
 
 /** Convert per-file results into DocumentDraft[] for the ReviewPanel. */
 function toDrafts(results: ReturnType<typeof useLocalizationStore.getState>['results']): DocumentDraft[] {
@@ -57,15 +58,15 @@ export function useLocalization() {
         appendLog({
           fileName: event.fileName,
           level: 'info',
-          message: `${stageLabel}：${event.fileName} (${event.index + 1}/${event.total})`,
+          message: `${stageLabel}: ${event.fileName} (${event.index + 1}/${event.total})`,
         });
       } else if (event.status === 'done') {
-        appendLog({ fileName: event.fileName, level: 'info', message: `${stageLabel}完成：${event.fileName}` });
+        appendLog({ fileName: event.fileName, level: 'info', message: `${stageLabel} complete: ${event.fileName}` });
       } else {
         appendLog({
           fileName: event.fileName,
           level: 'error',
-          message: `${stageLabel}失败：${event.fileName} — ${event.message ?? ''}`,
+          message: `${stageLabel} failed: ${event.fileName} — ${event.message ?? ''}`,
         });
       }
       // Refresh status/results when a stage finishes (last file of the batch),
@@ -135,6 +136,9 @@ export function useLocalization() {
     await refreshStatus();
   };
 
+  const aiEditArtifact = async (currentContent: string, instruction: string) =>
+    localizationApi.aiEditArtifact(currentContent, instruction, 'xml');
+
   const goBack = async (stage: LocalizationStage) => {
     await localizationApi.goBack(stage);
     await refreshStatus();
@@ -173,6 +177,7 @@ export function useLocalization() {
     continueFromReviewLocalize,
     submitHumanLocalizeReview,
     submitHumanConfirm,
+    aiEditArtifact,
     goBack,
     exportTo,
     setTargetLanguage,
@@ -182,11 +187,5 @@ export function useLocalization() {
 }
 
 export const STAGE_LABELS: Record<LocalizationStage, string> = {
-  localize: 'AI 翻译',
-  review_localize: '人工审阅',
-  localize_ai_review: 'AI 本地化评审',
-  human_localize_review: '人工本地化审核',
-  post_edit_review: 'AI 修改建议',
-  human_confirm: '人工最终确认',
-  export: '导出',
+  ...ui.localization.stageSteps,
 };

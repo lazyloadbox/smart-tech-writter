@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import type { ReviewComment } from '../../../../shared/types/document.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 import { v4 as uuidv4 } from 'uuid';
 
 interface ReviewCommentsViewProps {
@@ -90,18 +91,8 @@ const TYPE_ICON: Record<string, string> = {
 };
 
 const TYPE_LABEL: Record<string, string> = {
-  error: '错误',
-  warning: '警告',
-  suggestion: '建议',
-  info: '信息',
-  'Technical Accuracy': '技术准确性',
-  Consistency: '一致性',
-  Completeness: '完整性',
-  Structure: '结构',
-  Terminology: '术语',
-  Grammar: '语法',
-  Style: '风格',
-  Clarity: '清晰度',
+  ...ui.review.typeLabels,
+  ...ui.review.categoryLabels,
 };
 
 export function typeIcon(type: string): string {
@@ -133,7 +124,7 @@ export function typeColor(type: string): string {
  * Each card shows: type icon + label, section, explanation, and an
  * originalText → suggestedText diff (strikethrough red / green).
  */
-export const ReviewCommentsView: React.FC<ReviewCommentsViewProps> = ({ comments, emptyMessage = '暂无 AI 审查结果' }) => {
+export const ReviewCommentsView: React.FC<ReviewCommentsViewProps> = ({ comments, emptyMessage = ui.review.emptyComments }) => {
   const normalized = useMemo(() => normalizeComments(comments), [comments]);
 
   if (normalized.length === 0) {
@@ -155,9 +146,9 @@ export const ReviewCommentsView: React.FC<ReviewCommentsViewProps> = ({ comments
                   {typeLabel(c.type)}
                 </span>
                 {c.section && (
-                  <span className="text-xs text-gray-500 truncate">段落: {c.section}</span>
+                  <span className="text-xs text-gray-500 truncate">{formatUi(ui.review.section, { section: c.section ?? '' })}</span>
                 )}
-                {c.accepted && <span className="text-xs text-green-400 ml-auto">✓ 已接受</span>}
+                {c.accepted && <span className="text-xs text-green-400 ml-auto">✓ {ui.common.accepted}</span>}
               </div>
 
               {/* Explanation */}
@@ -168,12 +159,12 @@ export const ReviewCommentsView: React.FC<ReviewCommentsViewProps> = ({ comments
                 <div className="space-y-0.5 text-[11px]">
                   {c.originalText !== c.suggestedText && (
                     <div className="text-red-400/70 line-through bg-red-900/10 px-1.5 py-0.5 rounded whitespace-pre-wrap break-words">
-                      <span className="text-red-500/80 font-medium">原文: </span>
+                      <span className="text-red-500/80 font-medium">{ui.review.originalText}</span>
                       {c.originalText}
                     </div>
                   )}
                   <div className="text-green-400/80 bg-green-900/10 px-1.5 py-0.5 rounded whitespace-pre-wrap break-words">
-                    <span className="text-green-500/80 font-medium">建议: </span>
+                    <span className="text-green-500/80 font-medium">{ui.review.suggestedText}</span>
                     {c.suggestedText}
                   </div>
                 </div>

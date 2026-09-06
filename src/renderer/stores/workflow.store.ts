@@ -37,6 +37,7 @@ const initialState: DocGenState = {
   projectId: '',
   inputFiles: [],
   analysisResults: [],
+  analysisSynthesisMarkdown: '',
   referenceSearchResults: [],
   drafts: [],
   aiReviewComments: [],

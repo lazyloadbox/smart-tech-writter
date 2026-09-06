@@ -1,12 +1,7 @@
 import React, { useEffect } from 'react';
 import { XmlHighlight } from '../../doc-generator/components/xml/XmlHighlight';
 import type { LocalizationFileResult } from '../../../../shared/types/localization.types';
-
-const LANG_LABELS: Record<string, string> = {
-  en: 'English（英文）',
-  'zh-CN': '简体中文（中国大陆）',
-  'zh-TW': '繁體中文（台灣）',
-};
+import { en as ui, languageLabel } from '../../../../shared/i18n';
 
 interface LocalizePreviewModalProps {
   result: LocalizationFileResult;
@@ -17,7 +12,7 @@ interface LocalizePreviewModalProps {
  * Modal that previews a localized file's export name and final XML content.
  *
  * Shows:
- *  - the export file name (with the language suffix, e.g. `综合技术文档.zh-TW.dita`),
+ *  - the export file name (with its language suffix),
  *  - the source file name and target language,
  *  - the XML validation status (with remaining errors when not well-formed),
  *  - the final content, syntax-highlighted and read-only.
@@ -32,7 +27,7 @@ export const LocalizePreviewModal: React.FC<LocalizePreviewModalProps> = ({ resu
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const langLabel = LANG_LABELS[result.targetLanguage] ?? result.targetLanguage;
+  const langLabel = languageLabel(result.targetLanguage);
 
   return (
     <div
@@ -54,17 +49,17 @@ export const LocalizePreviewModal: React.FC<LocalizePreviewModalProps> = ({ resu
             onClick={onClose}
             className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors"
           >
-            ✕ 关闭
+            ✕ {ui.common.close}
           </button>
         </div>
 
         {/* Meta info */}
         <div className="shrink-0 px-4 py-2 bg-gray-900 border-b border-gray-700/60 flex items-center gap-4 text-xs text-gray-400 flex-wrap">
           <span>
-            源文件：<span className="text-gray-300">{result.fileName}</span>
+            {ui.localization.sourceFile} <span className="text-gray-300">{result.fileName}</span>
           </span>
           <span>
-            导出文件名：<span className="text-gray-300 font-mono">{result.exportFileName}</span>
+            {ui.localization.exportFilename} <span className="text-gray-300 font-mono">{result.exportFileName}</span>
           </span>
           {result.status === 'done' && (
             <span
@@ -78,9 +73,9 @@ export const LocalizePreviewModal: React.FC<LocalizePreviewModalProps> = ({ resu
             >
               {result.validated
                 ? result.repaired
-                  ? '⚠️ 已自动修复 XML 问题'
-                  : '✅ XML 校验通过'
-                : '❌ XML 校验未通过'}
+                  ? `⚠️ ${ui.localization.xmlAutoRepaired}`
+                  : `✅ ${ui.localization.xmlValid}`
+                : `❌ ${ui.localization.xmlInvalid}`}
             </span>
           )}
         </div>
@@ -88,7 +83,7 @@ export const LocalizePreviewModal: React.FC<LocalizePreviewModalProps> = ({ resu
         {/* Remaining validation errors (if any) */}
         {!result.validated && result.validationErrors && result.validationErrors.length > 0 && (
           <div className="shrink-0 px-4 py-2 bg-red-900/20 border-b border-red-800/50">
-            <p className="text-xs text-red-300 font-medium mb-1">校验错误：</p>
+            <p className="text-xs text-red-300 font-medium mb-1">{ui.localization.validationErrors}</p>
             <ul className="list-disc list-inside text-xs text-red-300/90 space-y-0.5">
               {result.validationErrors.map((e, i) => (
                 <li key={i}>{e}</li>

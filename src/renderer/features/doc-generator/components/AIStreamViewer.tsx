@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import type { StageName } from '../../../../shared/types/workflow.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface StreamChunk {
@@ -15,28 +16,6 @@ interface AIStreamViewerProps {
   currentStage: StageName;
   isRunning: boolean;
 }
-
-const STAGE_LABELS: Record<string, string> = {
-  upload_parse: 'AI 解析中',
-  analyze: 'AI 分析中',
-  draft: 'AI 生成草稿',
-  ai_review: 'AI 质量审查',
-  post_edit_review: 'AI 编辑后审查',
-  localize: 'AI 本地化',
-  localize_ai_review: 'AI 本地化审查',
-  dita_ai_review: 'AI DITA 结构审查',
-};
-
-const STAGE_DESCRIPTIONS: Record<string, string> = {
-  upload_parse: '正在读取文件内容，提取结构化信息…',
-  analyze: 'AI 正在深入分析文档主题、技术要点和关键词…',
-  draft: 'AI 正在基于分析结果撰写文档草稿…',
-  ai_review: 'AI 正在审查草稿质量，检查技术准确性和完整性…',
-  post_edit_review: 'AI 正在对比编辑前后的变更，验证修改合理性…',
-  localize: 'AI 正在将文档翻译为目标语言…',
-  localize_ai_review: 'AI 正在审查本地化翻译质量…',
-  dita_ai_review: 'AI 正在审查 DITA XML 结构、嵌套与转义…',
-};
 
 /**
  * Try to parse a string as a single JSON object/array. Returns the parsed object or null.
@@ -185,6 +164,9 @@ const JsonField: React.FC<{ label: string; value: unknown }> = ({ label, value }
 const StructuredJsonView: React.FC<{ data: Record<string, unknown>; title?: string }> = ({ data, title }) => {
   // Check if it looks like an AnalysisResult
   const isAnalysisResult = 'summary' in data && ('keywords' in data || 'keyPoints' in data || 'technicalTerms' in data);
+  // File parsing has an overview plus an evidence array. Render the array as
+  // readable extraction cards instead of coercing item objects to "[object Object]".
+  const isFileExtraction = 'overview' in data && Array.isArray(data.items);
   // Check if it looks like a ReviewComment
   const isReviewComment = 'type' in data && 'explanation' in data && ('error' === data.type || 'warning' === data.type || 'suggestion' === data.type || 'info' === data.type);
   // Check if it contains a "fileName" or "file" field
@@ -197,14 +179,14 @@ const StructuredJsonView: React.FC<{ data: Record<string, unknown>; title?: stri
         <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
           {hasFileName && (
             <span className="text-xs font-medium text-blue-300 flex items-center gap-1">
-              📄 {String(data.fileName || data.file || data.file_name || '未知文件')}
+              📄 {String(data.fileName || data.file || data.file_name || ui.stream.unknownFile)}
             </span>
           )}
           {title && !hasFileName && (
             <span className="text-xs font-medium text-gray-300">{title}</span>
           )}
           {isAnalysisResult && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded ml-auto">分析结果</span>
+            <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded ml-auto">{ui.stream.analysisResult}</span>
           )}
           {isReviewComment && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded ml-auto ${
@@ -212,7 +194,7 @@ const StructuredJsonView: React.FC<{ data: Record<string, unknown>; title?: stri
               data.type === 'warning' ? 'bg-yellow-900/40 text-yellow-300' :
               'bg-blue-900/40 text-blue-300'
             }`}>
-              {data.type === 'error' ? '错误' : data.type === 'warning' ? '警告' : data.type === 'suggestion' ? '建议' : '信息'}
+              {ui.review.typeLabels[data.type as keyof typeof ui.review.typeLabels] ?? ui.review.typeLabels.info}
             </span>
           )}
         </div>
@@ -220,9 +202,36 @@ const StructuredJsonView: React.FC<{ data: Record<string, unknown>; title?: stri
 
       {/* Fields */}
       <div className="space-y-0.5">
-        {Object.entries(data).filter(([, v]) => v != null && v !== '').map(([key, value]) => (
-          <JsonField key={key} label={key} value={value} />
-        ))}
+        {Object.entries(data)
+          .filter(([key, value]) => value != null && value !== '' && !(isFileExtraction && key === 'items'))
+          .map(([key, value]) => (
+            <JsonField key={key} label={key} value={value} />
+          ))}
+        {isFileExtraction && (
+          <div className="mt-2 rounded border border-blue-900/60 bg-blue-950/20 p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-blue-300">Extracted information</span>
+              <span className="text-[10px] text-gray-500">{(data.items as unknown[]).length} items</span>
+            </div>
+            <div className="space-y-1.5">
+              {(data.items as Array<Record<string, unknown>>).map((item, index) => (
+                <div key={index} className="rounded bg-gray-900/70 p-2 text-[11px]">
+                  <div className="text-gray-200">
+                    [{String(item.importance ?? 'normal')}] {String(item.title ?? `Item ${index + 1}`)}
+                  </div>
+                  <div className="mt-0.5 leading-relaxed text-gray-400">{String(item.content ?? '')}</div>
+                  {(item.sourceLocation || item.sourceQuote) && (
+                    <div className="mt-1 text-[10px] text-gray-600">
+                      {item.sourceLocation ? `Location: ${String(item.sourceLocation)}` : ''}
+                      {item.sourceLocation && item.sourceQuote ? ' · ' : ''}
+                      {item.sourceQuote ? `Source: ${String(item.sourceQuote)}` : ''}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -231,8 +240,8 @@ const StructuredJsonView: React.FC<{ data: Record<string, unknown>; title?: stri
 export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentStage, isRunning }) => {
   const thinkingRef = useRef<HTMLDivElement>(null);
   const [showRaw, setShowRaw] = useState(false);
-  const label = STAGE_LABELS[currentStage] ?? currentStage;
-  const description = STAGE_DESCRIPTIONS[currentStage] ?? '';
+  const label = ui.stream.stageLabels[currentStage] ?? currentStage;
+  const description = ui.stream.descriptions[currentStage] ?? '';
 
   // ── Hooks must be called unconditionally (Rules of Hooks) ──────────────
   // Visible output only — JSON parsing / raw view never include thinking text.
@@ -265,7 +274,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
   // ── Early-return logic after all hooks ─────────────────────────────────
   const aiStages: StageName[] = [
     'upload_parse', 'analyze', 'draft', 'ai_review',
-    'post_edit_review', 'localize', 'localize_ai_review', 'dita_ai_review',
+    'dita_ai_review',
   ];
   const isAiStage = aiStages.includes(currentStage);
 
@@ -278,7 +287,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
           <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
           <span className="text-sm font-medium text-blue-300">🤖 {label}</span>
         </div>
-        <p className="text-xs text-gray-500">{description || '等待 AI 响应中...'}</p>
+        <p className="text-xs text-gray-500">{description || ui.stream.waitingAi}</p>
       </div>
     );
   }
@@ -299,15 +308,15 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
         )}
         <span className="text-sm font-medium text-blue-300">🤖 {label}</span>
         <span className="text-xs text-gray-500 ml-auto">
-          {chunks.filter(c => c.stage === currentStage).length} chunks
+          {formatUi(ui.stream.chunks, { count: chunks.filter(c => c.stage === currentStage).length })}
         </span>
         {/* Toggle raw/structured */}
         <button
           onClick={() => setShowRaw(!showRaw)}
           className="text-[10px] px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-400 rounded transition-colors"
-          title={showRaw ? '切换为结构化视图' : '切换为原始文本视图'}
+          title={showRaw ? ui.stream.switchToStructured : ui.stream.switchToRaw}
         >
-          {showRaw ? '📋 结构化' : '{ } 原始'}
+          {showRaw ? `📋 ${ui.stream.structured}` : `{ } ${ui.stream.raw}`}
         </button>
       </div>
 
@@ -326,9 +335,9 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
             ) : (
               <span className="text-amber-400">🧠</span>
             )}
-            <span className="text-xs font-medium text-amber-300/90">思考过程</span>
+            <span className="text-xs font-medium text-amber-300/90">{ui.localization.thinking}</span>
             <span className="text-[10px] text-gray-500 ml-auto">
-              {chunks.filter((c) => c.stage === currentStage && c.type === 'thinking').length} chunks
+              {formatUi(ui.stream.chunks, { count: chunks.filter((c) => c.stage === currentStage && c.type === 'thinking').length })}
             </span>
           </summary>
           <div className="px-3 pb-3">
@@ -352,7 +361,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
         {!contentText ? (
           /* No visible output yet — still thinking or waiting */
           <p className="text-xs text-gray-500">
-            {isRunning ? '等待 AI 输出…' : '（无输出内容）'}
+            {isRunning ? ui.stream.waitingAi : ui.stream.noOutput}
           </p>
         ) : showRaw || !hasStructuredData ? (
           /* Raw text view */
@@ -375,7 +384,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
             {/* If it's a JSON array */}
             {parsedJson && Array.isArray(parsedJson) && (
               <>
-                <p className="text-[10px] text-gray-500 mb-1">{parsedJson.length} 条记录</p>
+                <p className="text-[10px] text-gray-500 mb-1">{formatUi(ui.stream.records, { count: parsedJson.length })}</p>
                 {parsedJson.map((item, i) => (
                   <StructuredJsonView
                     key={i}
@@ -390,13 +399,13 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
             {!parsedJson && jsonBlocks.length > 0 && (
               <>
                 {jsonBlocks.map((block, i) => (
-                  <StructuredJsonView key={i} data={block.json} title={`解析块 #${i + 1}`} />
+                  <StructuredJsonView key={i} data={block.json} title={formatUi(ui.stream.parsedBlock, { index: i + 1 })} />
                 ))}
                 {/* Show remaining non-JSON text if any */}
                 {contentText.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, '').trim() && (
                   <details className="mt-2">
                     <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">
-                      查看附加文本内容…
+                      {ui.stream.viewAdditionalText}
                     </summary>
                     <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words mt-1 p-2 bg-gray-950 rounded">
                       {contentText.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, '').trim()}
@@ -411,14 +420,14 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
               <>
                 <p className="text-[10px] text-gray-500 mb-1">
                   {currentStage === 'upload_parse'
-                    ? `共解析到 ${concatenatedJsons.length} 个文件的分析结果`
-                    : `共解析到 ${concatenatedJsons.length} 条结构化数据`}
+                    ? formatUi(ui.stream.parsedFiles, { count: concatenatedJsons.length })
+                    : formatUi(ui.stream.structuredData, { count: concatenatedJsons.length })}
                 </p>
                 {concatenatedJsons.map((block, i) => (
                   <StructuredJsonView
                     key={i}
                     data={block.json}
-                    title={currentStage === 'upload_parse' ? `文件分析结果 #${i + 1}` : `#${i + 1}`}
+                    title={currentStage === 'upload_parse' ? `${ui.stream.analysisResult} #${i + 1}` : `#${i + 1}`}
                   />
                 ))}
                 {/* Show any remaining non-JSON text after extraction */}
@@ -431,7 +440,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
                 })() && (
                   <details className="mt-2">
                     <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400">
-                      查看附加文本内容…
+                      {ui.stream.viewAdditionalText}
                     </summary>
                     <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words mt-1 p-2 bg-gray-950 rounded">
                       {(() => {
@@ -451,7 +460,7 @@ export const AIStreamViewer: React.FC<AIStreamViewerProps> = ({ chunks, currentS
             {isRunning && (
               <div className="flex items-center gap-2 text-xs text-blue-400 mt-2">
                 <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse" />
-                正在接收 AI 响应…
+                {ui.stream.receiving}
               </div>
             )}
           </div>

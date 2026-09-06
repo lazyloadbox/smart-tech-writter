@@ -122,6 +122,7 @@ export function registerSettingsHandlers(engine: WorkflowEngine, localizationSer
       apiKey,
       baseURL: baseURL || undefined,
       defaultModel: model,
+      reasoningEffort: (getSetting('openai.reasoningEffort') as 'none' | 'low' | 'medium' | 'high' | null) ?? 'medium',
     });
     engine.updateProvider(provider);
     localizationService.updateProvider(provider);

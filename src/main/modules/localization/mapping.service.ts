@@ -1,6 +1,7 @@
 import { getDatabase } from '../storage/database';
 import { v4 as uuidv4 } from 'uuid';
 import log from 'electron-log';
+import { en as ui, formatUi } from '../../../shared/i18n';
 import type { LocalizeLanguage } from '../../../shared/types/document.types';
 import type {
   TranslationMapping,
@@ -163,13 +164,13 @@ export class MappingService {
         const zhTW = (row.zhTW ?? '').trim();
         if (!en || !zhCN || !zhTW) {
           result.skipped++;
-          result.errors.push(`跳过空行：${en || '(空)'} / ${zhCN || '(空)'} / ${zhTW || '(空)'}`);
+          result.errors.push(formatUi(ui.backend.skipEmptyRow, { values: `${en || '(empty)'} / ${zhCN || '(empty)'} / ${zhTW || '(empty)'}` }));
           continue;
         }
         const key = en.toLowerCase();
         if (existing.has(key) || seenInBatch.has(key)) {
           result.skipped++;
-          result.errors.push(`跳过重复：${en}`);
+          result.errors.push(formatUi(ui.backend.skipDuplicate, { term: en }));
           continue;
         }
         existing.add(key);
@@ -184,7 +185,7 @@ export class MappingService {
       });
     } catch (err) {
       log.error('[Mapping] importMappings failed:', err);
-      result.errors.push(`导入失败：${err instanceof Error ? err.message : String(err)}`);
+      result.errors.push(formatUi(ui.backend.importFailed, { error: err instanceof Error ? err.message : String(err) }));
     }
     return result;
   }

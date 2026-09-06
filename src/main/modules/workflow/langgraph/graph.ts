@@ -10,9 +10,6 @@ import {
   runAnalyzeStage,
   runDraftStage,
   runAiReviewStage,
-  runPostEditReviewStage,
-  runLocalizeStage,
-  runLocalizeAiReviewStage,
   runDitaBuildStage,
   runDitaAiReviewStage,
   runExportStage,
@@ -108,7 +105,7 @@ function makePauseNode(stage: StageName) {
 }
 
 /**
- * Builds and compiles the workflow StateGraph (20 stages / 9 pause points).
+ * Builds and compiles the workflow StateGraph (14 active stages / 7 pause points).
  * The graph is static across projects; per-project runtime (provider, RAG,
  * emitter) flows through `config.configurable`.
  */
@@ -123,12 +120,6 @@ export function buildWorkflowGraph() {
     .addNode('review_draft', makePauseNode('review_draft'))
     .addNode('ai_review', makeExecutionNode('ai_review', runAiReviewStage))
     .addNode('human_review', makePauseNode('human_review'))
-    .addNode('post_edit_review', makeExecutionNode('post_edit_review', runPostEditReviewStage))
-    .addNode('human_confirm', makePauseNode('human_confirm'))
-    .addNode('localize', makeExecutionNode('localize', runLocalizeStage))
-    .addNode('review_localize', makePauseNode('review_localize'))
-    .addNode('localize_ai_review', makeExecutionNode('localize_ai_review', runLocalizeAiReviewStage))
-    .addNode('human_localize_review', makePauseNode('human_localize_review'))
     .addNode('dita_build', makeExecutionNode('dita_build', runDitaBuildStage))
     .addNode('review_dita', makePauseNode('review_dita'))
     .addNode('dita_ai_review', makeExecutionNode('dita_ai_review', runDitaAiReviewStage))
@@ -143,17 +134,7 @@ export function buildWorkflowGraph() {
     .addEdge('draft', 'review_draft')
     .addEdge('review_draft', 'ai_review')
     .addEdge('ai_review', 'human_review')
-    .addEdge('human_review', 'post_edit_review')
-    .addEdge('post_edit_review', 'human_confirm')
-    // Stage 6b skip-localization: jump straight to dita_build when opted out.
-    .addConditionalEdges('human_confirm', (state) => {
-      if (state.skipLocalization) return 'dita_build';
-      return 'localize';
-    })
-    .addEdge('localize', 'review_localize')
-    .addEdge('review_localize', 'localize_ai_review')
-    .addEdge('localize_ai_review', 'human_localize_review')
-    .addEdge('human_localize_review', 'dita_build')
+    .addEdge('human_review', 'dita_build')
     .addEdge('dita_build', 'review_dita')
     .addEdge('review_dita', 'dita_ai_review')
     .addEdge('dita_ai_review', 'human_dita_review')

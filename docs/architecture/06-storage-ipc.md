@@ -62,7 +62,7 @@ CREATE UNIQUE INDEX idx_translation_mappings_en ON translation_mappings(en COLLA
 | 行为 | 实现 |
 |---|---|
 | 写状态 | `persistState`：`INSERT OR REPLACE INTO projects(...)` 整状态序列化；每次阶段进入/完成/暂停/失败都会写 |
-| 读状态 | `loadState`：`SELECT state_json` → `JSON.parse`，并对旧快照回填新字段（`skipLocalization=true`、`humanEditedDrafts=[]`、`ingestContext=''`、`documentOutline`） |
+| 读状态 | `loadState`：`SELECT state_json` → `JSON.parse`，并对旧快照回填新字段（`skipLocalization=true`、`humanEditedDrafts=[]`、`ingestContext=''`、`analysisSynthesisMarkdown=''`、`documentOutline`） |
 | 设置 | `getSetting/setSetting`，键约定 `openai.apiKey` `openai.baseURL` `openai.model` `rag.searchDirectory` `prompts.overrides` |
 | 项目列表 | `projects:list` 按 `updated_at DESC` 返回 `Project[]`（不含 state_json） |
 | 术语表 | `translation_mappings` 建表后 `seedDefaultMappings` 用 `INSERT OR IGNORE` 种入约 400 条默认术语（不覆盖用户数据） |
@@ -84,7 +84,7 @@ CREATE UNIQUE INDEX idx_translation_mappings_en ON translation_mappings(en COLLA
 
 通道常量定义于 `src/shared/types/ipc.types.ts`（`IPC_CHANNELS`）。方向：`invoke` = 渲染→主请求/响应，`send` = 主→渲染事件推送。
 
-### 工作流组（13，`workflow.ipc.ts`）
+### 工作流组（14，`workflow.ipc.ts`）
 
 | 通道 | 方向 | Payload → 返回 | 说明 |
 |---|---|---|---|
@@ -99,8 +99,9 @@ CREATE UNIQUE INDEX idx_translation_mappings_en ON translation_mappings(en COLLA
 | `workflow:humanConfirmSubmit` | invoke | `{projectId, approved, targetLanguage?, skipLocalization?, editedDrafts?, acceptedCommentIds?}` | 确认 + 语言 + 跳本地化 |
 | `workflow:humanLocalizeSubmit` | invoke | `{projectId, editedLocalizedDrafts, acceptedCommentIds}` | 本地化人工提交 |
 | `workflow:humanDitaSubmit` | invoke | `{projectId, editedDitaDocuments, acceptedCommentIds}` | DITA 人工提交 |
-| `workflow:reviewContinue` | invoke | `{projectId, stage, editedDrafts?}` | 通用审核继续（可带改后草稿） |
+| `workflow:reviewContinue` | invoke | `{projectId, stage, editedDrafts?, editedInputFiles?, editedAnalysisResults?, editedAnalysisSynthesisMarkdown?, editedReferenceSearchResults?, editedLocalizedDrafts?, editedDitaDocuments?}` | 通用审核继续，按确认 step 写回对应 Markdown/产出物 |
 | `workflow:aiEditDraft` | invoke | `{projectId, currentContent, instruction}` → `string` | AI 指令改稿（流式经 stream 通道） |
+| `workflow:aiEditArtifact` | invoke | `{projectId, currentContent, instruction, format, stage?}` → `string` | 人工确认 step 的格式感知 AI 对话编辑（JSON / Markdown / XML / text） |
 
 ### 文件组（6，`file.ipc.ts`）
 
@@ -133,7 +134,7 @@ CREATE UNIQUE INDEX idx_translation_mappings_en ON translation_mappings(en COLLA
 | `prompts:get` / `prompts:set` / `prompts:reset` | 提示词目录 + 覆盖读写/重置 |
 | `projects:list` / `projects:get` / `projects:getState` / `projects:delete` | 项目元数据 CRUD + 完整状态恢复 |
 
-### 独立本地化组（12，`localization.ipc.ts`）
+### 独立本地化组（13，`localization.ipc.ts`）
 
 | 通道 | 说明 |
 |---|---|
@@ -144,6 +145,7 @@ CREATE UNIQUE INDEX idx_translation_mappings_en ON translation_mappings(en COLLA
 | `localize:progress` / `localize:stream` | send 事件（逐文件进度 + AI 流式 chunk） |
 | `localize:continue` | 从 review_localize 继续（可带人工编辑） |
 | `localize:humanLocalizeSubmit` / `localize:humanConfirmSubmit` | 人工提交 |
+| `localize:aiEditArtifact` | 人工确认 step 中按 XML 格式调用 AI 对话编辑 |
 | `localize:goBack` | 回退到更早阶段 |
 | `localize:runsList` / `localize:runsGet` / `localize:runsDelete` / `localize:runsLoad` | 运行记录 CRUD + 恢复 |
 

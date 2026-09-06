@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import log from 'electron-log';
-import type { AIProvider, AIMessage, AIStreamChunk, CompletionOptions, ProviderConfig } from './base.provider';
+import type { AIProvider, AIMessage, AIStreamChunk, CompletionOptions, ProviderConfig, ReasoningEffort } from './base.provider';
 
 /**
  * Default output token cap applied when a caller doesn't specify maxTokens.
@@ -15,6 +15,7 @@ export class OpenAIProvider implements AIProvider {
   readonly providerName = 'openai';
   private client: OpenAI;
   private defaultModel: string;
+  private reasoningEffort?: ReasoningEffort;
 
   constructor(config: ProviderConfig) {
     // Use a placeholder if apiKey is empty to prevent the SDK from throwing at
@@ -24,9 +25,11 @@ export class OpenAIProvider implements AIProvider {
       baseURL: config.baseURL || undefined,
     });
     this.defaultModel = config.defaultModel ?? 'gpt-4o';
+    this.reasoningEffort = config.reasoningEffort;
   }
 
   async complete(messages: AIMessage[], options?: CompletionOptions): Promise<string> {
+    throwIfAborted(options?.signal);
     const model = options?.model ?? this.defaultModel;
     const response = await this.client.chat.completions.create(
       {
@@ -34,6 +37,8 @@ export class OpenAIProvider implements AIProvider {
         messages,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
+        ...reasoningEffortParams(model, options?.reasoningEffort ?? this.reasoningEffort),
       },
       { signal: options?.signal }
     );
@@ -64,6 +69,7 @@ export class OpenAIProvider implements AIProvider {
    * thinking models; the UI shows them live so long AI stages don't look stuck.
    */
   async *streamDetailed(messages: AIMessage[], options?: CompletionOptions): AsyncIterable<AIStreamChunk> {
+    throwIfAborted(options?.signal);
     const model = options?.model ?? this.defaultModel;
     const stream = await this.client.chat.completions.create(
       {
@@ -72,12 +78,15 @@ export class OpenAIProvider implements AIProvider {
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
         stream: true,
+        ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
+        ...reasoningEffortParams(model, options?.reasoningEffort ?? this.reasoningEffort),
       },
       { signal: options?.signal }
     );
     let total = 0;
     let finishReason: string | null = null;
     for await (const chunk of stream) {
+      throwIfAborted(options?.signal);
       const choice = chunk.choices[0];
       if (choice?.finish_reason) finishReason = choice.finish_reason;
       // `reasoning_content` is a non-standard OpenAI-compatible field used by
@@ -104,4 +113,27 @@ export class OpenAIProvider implements AIProvider {
     });
     return response.data[0]?.embedding ?? [];
   }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error('AI request aborted');
+  error.name = 'AbortError';
+  throw error;
+}
+
+/**
+ * These are the only models currently enabled by the application that expose
+ * an OpenAI-compatible reasoning_effort field. Never send the field to an
+ * unknown model: many compatible endpoints reject unknown request fields.
+ */
+function reasoningEffortParams(model: string, effort?: ReasoningEffort): Record<string, string> {
+  if (!effort || !supportsReasoningEffort(model)) return {};
+  return { reasoning_effort: effort };
+}
+
+function supportsReasoningEffort(model: string): boolean {
+  const normalized = model.toLowerCase().replace(/[\s_]+/g, '-');
+  return /qwen.*3[.-](?:5|6|8)(?:[-.]|$)/.test(normalized)
+    || /deepseek.*v?4.*flash/.test(normalized);
 }

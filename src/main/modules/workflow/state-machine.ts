@@ -18,12 +18,6 @@ export const STAGE_ORDER: StageName[] = [
   'review_draft',
   'ai_review',
   'human_review',
-  'post_edit_review',
-  'human_confirm',
-  'localize',
-  'review_localize',
-  'localize_ai_review',
-  'human_localize_review',
   'dita_build',
   'review_dita',
   'dita_ai_review',
@@ -36,9 +30,6 @@ export const PAUSE_STAGES = new Set<StageName>([
   'review_analyze',
   'review_draft',
   'human_review',
-  'human_confirm',
-  'review_localize',
-  'human_localize_review',
   'review_dita',
   'human_dita_review',
 ]);
@@ -49,9 +40,6 @@ export function getStatusForStage(stage: StageName): WorkflowStatus {
     case 'review_analyze': return 'PAUSED:REVIEW_ANALYZE';
     case 'review_draft': return 'PAUSED:REVIEW_DRAFT';
     case 'human_review': return 'PAUSED:HUMAN_REVIEW';
-    case 'human_confirm': return 'PAUSED:HUMAN_CONFIRM';
-    case 'review_localize': return 'PAUSED:REVIEW_LOCALIZE';
-    case 'human_localize_review': return 'PAUSED:HUMAN_LOCALIZE_REVIEW';
     case 'review_dita': return 'PAUSED:REVIEW_DITA';
     case 'human_dita_review': return 'PAUSED:HUMAN_DITA_REVIEW';
     default: return 'RUNNING';

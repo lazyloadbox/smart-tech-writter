@@ -1,17 +1,18 @@
 import React from 'react';
+import { en as ui } from '../../shared/i18n';
 
 /** A single step shown in the vertical step navigation sidebar. */
 export interface StepNavItem {
   /** Unique step id (matches the feature's stage/step type). */
   id: string;
-  /** Display label, e.g. "1. AI 翻译". */
+  /** Display label, e.g. "1. AI translation". */
   label: string;
   /** Whether this step pauses for human interaction. */
   isPause?: boolean;
 }
 
 interface StepNavigationProps {
-  /** Sidebar title, e.g. "工作流步骤". */
+  /** Sidebar title, e.g. "Workflow steps". */
   title?: string;
   /** Ordered list of steps. */
   steps: StepNavItem[];
@@ -24,7 +25,7 @@ interface StepNavigationProps {
   status: string;
   /** Called when the user clicks a completed step to go back. */
   onGoBack?: (targetStep: string) => void;
-  /** Optional footer content (e.g. a "新建项目" / "新建翻译" button). */
+  /** Optional footer content (e.g. a "New project" / "New translation" button). */
   footer?: React.ReactNode;
   /** Sidebar width class (default `w-52`). */
   widthClass?: string;
@@ -39,7 +40,7 @@ interface StepNavigationProps {
  * tools) can reuse the same visual language.
  */
 export const StepNavigation: React.FC<StepNavigationProps> = ({
-  title = '工作流步骤',
+  title = ui.common.workflowSteps,
   steps,
   currentStep,
   status,
@@ -78,7 +79,7 @@ export const StepNavigation: React.FC<StepNavigationProps> = ({
                       : 'text-green-400'
                     : 'text-gray-500'
               }`}
-              title={canGoBack ? `点击返回: ${step.label}` : step.label}
+              title={canGoBack ? `Go back to ${step.label}` : step.label}
             >
               <span className="shrink-0 text-xs">
                 {isDone ? '✓' : isActive ? (isPaused ? '⏸' : '▶') : '○'}

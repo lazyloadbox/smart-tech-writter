@@ -15,6 +15,7 @@ export const IPC_CHANNELS = {
   WORKFLOW_HUMAN_DITA_SUBMIT: 'workflow:humanDitaSubmit',
   WORKFLOW_REVIEW_CONTINUE: 'workflow:reviewContinue',
   WORKFLOW_AI_EDIT_DRAFT: 'workflow:aiEditDraft',
+  WORKFLOW_AI_EDIT_ARTIFACT: 'workflow:aiEditArtifact',
   // File
   FILE_SELECT: 'file:select',
   FILE_READ: 'file:read',
@@ -53,6 +54,7 @@ export const IPC_CHANNELS = {
   LOCALIZE_CONTINUE: 'localize:continue',
   LOCALIZE_HUMAN_LOCALIZE_SUBMIT: 'localize:humanLocalizeSubmit',
   LOCALIZE_HUMAN_CONFIRM_SUBMIT: 'localize:humanConfirmSubmit',
+  LOCALIZE_AI_EDIT_ARTIFACT: 'localize:aiEditArtifact',
   LOCALIZE_GO_BACK: 'localize:goBack',
   // Localization run history (persisted runs)
   LOCALIZE_RUNS_LIST: 'localize:runsList',
@@ -155,6 +157,18 @@ export interface ReviewContinuePayload {
   stage: import('./workflow.types').StageName;
   /** Optional edited drafts to apply before continuing (e.g. review_draft AI edits) */
   editedDrafts?: import('./document.types').DocumentDraft[];
+  /** Optional edited parsed-file output from review_upload. */
+  editedInputFiles?: import('./document.types').UploadedFile[];
+  /** Optional edited analysis output from review_analyze. */
+  editedAnalysisResults?: import('./document.types').AnalysisResult[];
+  /** Optional edited cross-file synthesis from review_analyze. */
+  editedAnalysisSynthesisMarkdown?: string;
+  /** Optional edited reference list from review_analyze. */
+  editedReferenceSearchResults?: import('./document.types').SearchResult[];
+  /** Optional edited localized drafts from review_localize. */
+  editedLocalizedDrafts?: import('./document.types').DocumentDraft[];
+  /** Optional edited DITA documents from review_dita. */
+  editedDitaDocuments?: import('./document.types').DocumentDraft[];
 }
 
 export interface AiEditDraftPayload {
@@ -163,6 +177,22 @@ export interface AiEditDraftPayload {
   currentContent: string;
   /** The user's natural-language edit instruction for the AI */
   instruction: string;
+}
+
+/** Formats supported by the human ↔ AI artifact editor. */
+export type AiArtifactFormat = 'text' | 'markdown' | 'xml' | 'json';
+
+/** Request to revise the current output artifact according to a human instruction. */
+export interface AiEditArtifactPayload {
+  currentContent: string;
+  instruction: string;
+  format: AiArtifactFormat;
+}
+
+export interface WorkflowAiEditArtifactPayload extends AiEditArtifactPayload {
+  projectId: string;
+  /** Human checkpoint that owns the artifact; used for stream/log attribution. */
+  stage?: import('./workflow.types').StageName;
 }
 
 export interface SettingsGetPayload {

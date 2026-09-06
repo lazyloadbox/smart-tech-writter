@@ -128,17 +128,17 @@ classDiagram
         +aiReviewComments: ReviewComment[]
         +humanEdits: string
         +humanEditedDrafts: DocumentDraft[]
-        +postEditReviewComments: ReviewComment[]
-        +localizedDrafts: DocumentDraft[]
-        +localizeReviewComments: ReviewComment[]
+        +postEditReviewComments: ReviewComment[]  // legacy/standalone localization compatibility
+        +localizedDrafts: DocumentDraft[]  // standalone localization compatibility
+        +localizeReviewComments: ReviewComment[]  // standalone localization compatibility
         +ditaDocuments: DocumentDraft[]
         +ditaReviewComments: ReviewComment[]
         +outputDocuments: OutputDocument[]
         +ingestContext: string
-        +targetLanguage: LocalizeLanguage
+        +targetLanguage: LocalizeLanguage  // legacy/standalone localization compatibility
         +documentOutline: DocumentOutline
         +parseInstruction?: string
-        +skipLocalization: boolean
+        +skipLocalization: boolean  // legacy compatibility; Gen Doc no longer branches to localization
         +workflowLogs: WorkflowLogEntry[]
         +currentStage: StageName
         +status: WorkflowStatus
@@ -153,17 +153,17 @@ classDiagram
 |---|---|---|
 | `inputFiles` | startWorkflow 初始化；upload_parse 填充 | ingest/analyze/UI |
 | `analysisResults` / `referenceSearchResults` | analyze | draft/UI |
-| `ingestContext` | ingest（元数据 + AI 摘要 + 提取文本汇总） | analyze |
-| `drafts` | draft | ai_review/human_review/localize/dita_build/UI |
+| `ingestContext` | ingest（完整 Markdown 提炼 + 原文基线汇总） | analyze |
+| `drafts` | draft | ai_review/human_review/dita_build/UI |
 | `aiReviewComments` | ai_review | human_review/UI |
-| `humanEdits` | human_review 提交（兼容旧版单字符串） | post_edit_review/human_confirm/downstream effective drafts |
+| `humanEdits` | human_review 提交（兼容旧版单字符串） | downstream effective drafts（旧版 post-edit/confirm 字段仍兼容读取） |
 | `humanEditedDrafts` | human_review 提交（按草稿粒度） | 下游 effective drafts（优先于 humanEdits） |
-| `postEditReviewComments` | post_edit_review | human_confirm/UI |
-| `targetLanguage` / `skipLocalization` | human_confirm 提交 | localize/引擎跳转逻辑 |
+| `postEditReviewComments` | 旧版/独立本地化兼容字段 | 兼容读取/UI |
+| `targetLanguage` / `skipLocalization` | 旧版状态兼容字段 | 不再驱动 Gen Doc 分支；独立本地化使用自己的 run state |
 | `documentOutline` | startWorkflow（可选） | draft（WriterAgent 章节结构） |
 | `parseInstruction` | startWorkflow（可选） | upload_parse（FileParserAgent + map-reduce） |
-| `localizedDrafts` | localize | review_localize/localize_ai_review/human_localize_review/dita_build |
-| `localizeReviewComments` | localize_ai_review | human_localize_review/UI |
+| `localizedDrafts` | 独立本地化 localize | 独立本地化 review/localize export |
+| `localizeReviewComments` | 独立本地化 review | 独立本地化 UI |
 | `ditaDocuments` | dita_build | review_dita/dita_ai_review/human_dita_review/export |
 | `ditaReviewComments` | dita_ai_review | human_dita_review/UI |
 | `outputDocuments` | export | OutputPanel/文件导出 IPC |

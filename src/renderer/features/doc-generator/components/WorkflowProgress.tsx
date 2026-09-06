@@ -1,34 +1,12 @@
 import React from 'react';
 import type { StageName, WorkflowStatus } from '../../../../shared/types/workflow.types';
+import { en as ui } from '../../../../shared/i18n';
 
 interface WorkflowProgressProps {
   stage: StageName;
   status: WorkflowStatus;
   message?: string;
 }
-
-const STAGE_LABELS: Record<StageName, string> = {
-  upload_parse: '上传 & 解析',
-  review_upload: '确认解析结果',
-  ingest: '数据汇总',
-  analyze: 'AI 分析',
-  review_analyze: '确认分析结果',
-  draft: '生成草稿',
-  review_draft: '审阅草稿',
-  ai_review: 'AI Review',
-  human_review: '人工 Review',
-  post_edit_review: '编辑后 Review',
-  human_confirm: '人工确认',
-  localize: '本地化',
-  review_localize: '审阅本地化结果',
-  localize_ai_review: '本地化 Review',
-  human_localize_review: '人工本地化审核',
-  dita_build: '生成 DITA',
-  review_dita: '审阅 DITA 结果',
-  dita_ai_review: 'DITA AI Review',
-  human_dita_review: '人工 DITA 审核',
-  export: '导出',
-};
 
 export const WorkflowProgress: React.FC<WorkflowProgressProps> = ({ stage, status, message }) => {
   const isRunning = status === 'RUNNING';
@@ -49,12 +27,12 @@ export const WorkflowProgress: React.FC<WorkflowProgressProps> = ({ stage, statu
         />
         <div>
           <div className="text-sm font-medium text-gray-200">
-            {STAGE_LABELS[stage] ?? stage}
+            {ui.workflow.stages[stage] ?? stage}
             <span className="ml-2 text-xs text-gray-400">
-              {isRunning && '运行中...'}
-              {isPaused && '⏸ 等待人工操作'}
-              {isCompleted && '✅ 完成'}
-              {isFailed && '❌ 失败'}
+              {isRunning && ui.workflow.running.running}
+              {isPaused && `⏸ ${ui.workflow.running.paused}`}
+              {isCompleted && `✅ ${ui.workflow.running.completed}`}
+              {isFailed && `❌ ${ui.workflow.running.failed}`}
             </span>
           </div>
           {message && <div className="text-xs text-gray-400 mt-0.5">{message}</div>}

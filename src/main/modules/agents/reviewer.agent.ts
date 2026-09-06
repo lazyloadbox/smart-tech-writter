@@ -1,7 +1,8 @@
 import { BaseAgent } from './base.agent';
 import type { AIProvider } from '../ai-providers/base.provider';
 import type { AgentConfig } from './base.agent';
-import { PROMPTS, buildReviewFixPrompt, buildReviewUserPrompt } from '../prompts';
+import { PROMPTS, buildReviewUserPrompt } from '../prompts';
+import { reviewCommentsContract } from '../ai-providers/output-contracts';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { ReviewComment, DocumentDraft } from '../../../shared/types/document.types';
 import { v4 as uuidv4 } from 'uuid';
@@ -64,7 +65,7 @@ export function normalizeComments(parsed: unknown, draftsToReview: DocumentDraft
         ?? '';
     }
     return {
-      id: c.id ?? uuidv4(),
+      id: c.id || uuidv4(),
       draftId,
       type: VALID_TYPES.has(c.type as ReviewComment['type']) ? (c.type as ReviewComment['type']) : 'suggestion',
       section: c.section,
@@ -74,14 +75,6 @@ export function normalizeComments(parsed: unknown, draftsToReview: DocumentDraft
       accepted: false,
     };
   });
-}
-
-function tryParseComments(response: string, draftsToReview: DocumentDraft[]): ReviewComment[] | null {
-  try {
-    return normalizeComments(JSON.parse(extractJsonArray(response)), draftsToReview);
-  } catch {
-    return null;
-  }
 }
 
 export class ReviewerAgent extends BaseAgent {
@@ -112,26 +105,15 @@ export class ReviewerAgent extends BaseAgent {
       state.drafts;
     if (draftsToReview.length === 0) return {};
 
-    const draftsContext = draftsToReview.map((d) => `## ${d.title}\n\n${d.content}`).join('\n\n---\n\n');
+    const draftsContext = draftsToReview.map((d) => `## ${d.title} [ID: ${d.id}]\n\n${d.content}`).join('\n\n---\n\n');
     const humanEditsNote = this.mode === 'post_edit_review'
       ? (state.humanEditedDrafts?.[0]?.content ?? state.humanEdits)
         ? `\n\nHuman editor notes:\n${state.humanEditedDrafts?.[0]?.content ?? state.humanEdits}`
         : ''
       : '';
 
-    const response = await this.callLLM(buildReviewUserPrompt(draftsContext, humanEditsNote));
-
-    // M6: parse with a one-shot retry. If the AI wrapped the JSON in fences /
-    // prose (or emitted malformed JSON), ask it to output ONLY the corrected
-    // array before degrading to a single info comment.
-    let comments = tryParseComments(response, draftsToReview);
-    if (!comments) {
-      const retry = await this.callLLM(buildReviewFixPrompt(response));
-      comments = tryParseComments(retry, draftsToReview);
-    }
-    if (!comments) {
-      comments = [{ id: uuidv4(), draftId: draftsToReview[0]?.id ?? '', type: 'info', explanation: response, accepted: false }];
-    }
+    const parsed = await this.callStructuredLLM(buildReviewUserPrompt(draftsContext, humanEditsNote), reviewCommentsContract);
+    const comments = normalizeComments(parsed, draftsToReview) ?? [];
 
     switch (this.mode) {
       case 'post_edit_review': return { postEditReviewComments: comments };

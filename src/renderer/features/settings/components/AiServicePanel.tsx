@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../../stores/settings.store';
+import { en as ui } from '../../../../shared/i18n';
 
-/** AI 服务配置面板（设置页第一个 tab） */
+/** AI service configuration panel. */
 export const AiServicePanel: React.FC = () => {
   const store = useSettingsStore();
   const [saved, setSaved] = useState(false);
@@ -26,55 +27,66 @@ export const AiServicePanel: React.FC = () => {
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-gray-100">AI 服务配置</h2>
+        <h2 className="text-xl font-semibold text-gray-100">{ui.settings.aiServiceTitle}</h2>
         <p className="text-xs text-gray-500 mt-1">
-          配置文档生成工作流使用的 AI 服务。保存后立即生效，无需重启。
+          {ui.settings.aiServiceDescription}
         </p>
       </div>
 
       <section className="space-y-4">
         <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700 pb-2">
-          OpenAI 兼容服务
+          {ui.settings.openAiCompatible}
         </h3>
         <p className="text-xs text-gray-500">
-          兼容 OpenAI API 格式的服务均可使用，例如{' '}
-          <span className="text-gray-400">302.ai</span>。
-          Base URL 填写服务商的 API 前缀（不含 <code className="text-gray-400">/chat/completions</code>），
-          SDK 会自动补全路径。
+          {ui.settings.openAiCompatibleDescription}
         </p>
         <Field
-          label="API Key"
+          label={ui.settings.apiKey}
           type="password"
-          placeholder="sk-..."
+          placeholder={ui.settings.apiKeyPlaceholder}
           value={store.openaiApiKey}
           onChange={store.setOpenaiApiKey}
         />
         <Field
-          label="Base URL（302.ai 填 https://api.302.ai/v1）"
-          placeholder="https://api.302.ai/v1"
+          label={ui.settings.baseUrl}
+          placeholder={ui.settings.baseUrlPlaceholder}
           value={store.openaiBaseURL}
           onChange={store.setOpenaiBaseURL}
         />
         <Field
-          label="模型"
-          placeholder="gpt-4o"
+          label={ui.settings.model}
+          placeholder={ui.settings.modelPlaceholder}
           value={store.openaiModel}
           onChange={store.setOpenaiModel}
         />
+        <div className="space-y-1">
+          <label className="block text-xs font-medium text-gray-400">{ui.settings.reasoningEffort}</label>
+          <select
+            value={store.openaiReasoningEffort}
+            onChange={(event) => store.setOpenaiReasoningEffort(event.target.value as typeof store.openaiReasoningEffort)}
+            className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+          >
+            <option value="none">{ui.settings.reasoningEffortNone}</option>
+            <option value="low">{ui.settings.reasoningEffortLow}</option>
+            <option value="medium">{ui.settings.reasoningEffortMedium}</option>
+            <option value="high">{ui.settings.reasoningEffortHigh}</option>
+          </select>
+          <p className="text-[11px] text-gray-500">{ui.settings.reasoningEffortHelp}</p>
+        </div>
       </section>
 
       <section className="space-y-4">
         <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700 pb-2">
-          本地文档搜索 (RAG Placeholder)
+          {ui.settings.ragTitle}
         </h3>
         <Field
-          label="搜索目录路径"
-          placeholder="C:/Documents/References"
+          label={ui.settings.ragDirectory}
+          placeholder={ui.settings.ragDirectoryPlaceholder}
           value={store.ragSearchDirectory}
           onChange={store.setRagSearchDirectory}
         />
         <p className="text-xs text-gray-500">
-          AI 分析阶段会在此目录内搜索相关参考文档作为上下文输入
+          {ui.settings.ragDescription}
         </p>
       </section>
 
@@ -84,9 +96,9 @@ export const AiServicePanel: React.FC = () => {
           disabled={saving}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded font-medium transition-colors"
         >
-          {saving ? '保存中...' : '保存设置'}
+          {saving ? ui.settings.saving : ui.settings.saveSettings}
         </button>
-        {saved && <span className="text-green-400 text-sm">✓ 已保存</span>}
+        {saved && <span className="text-green-400 text-sm">✓ {ui.settings.saved}</span>}
       </div>
     </div>
   );

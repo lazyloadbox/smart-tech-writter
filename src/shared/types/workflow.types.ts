@@ -62,6 +62,8 @@ export interface DocGenState {
   projectId: string;
   inputFiles: import('./document.types').UploadedFile[];
   analysisResults: import('./document.types').AnalysisResult[];
+  /** Cross-file relationships, conflicts, dependencies and conclusions in Markdown. */
+  analysisSynthesisMarkdown: string;
   referenceSearchResults: import('./document.types').SearchResult[];
   drafts: import('./document.types').DocumentDraft[];
   aiReviewComments: import('./document.types').ReviewComment[];
@@ -73,8 +75,11 @@ export interface DocGenState {
    * original drafts are shown again.
    */
   humanEditedDrafts: import('./document.types').DocumentDraft[];
+  /** @deprecated Retained only for persisted-state compatibility; Gen Doc no longer runs post-edit review. */
   postEditReviewComments: import('./document.types').ReviewComment[];
+  /** @deprecated Localization is a standalone workflow, not a Gen Doc stage. */
   localizedDrafts: import('./document.types').DocumentDraft[];
+  /** @deprecated Localization is a standalone workflow, not a Gen Doc stage. */
   localizeReviewComments: import('./document.types').ReviewComment[];
   /** DITA XML documents generated from localized drafts (raw XML text stored as DocumentDraft.content) */
   ditaDocuments: import('./document.types').DocumentDraft[];
@@ -83,7 +88,7 @@ export interface DocGenState {
   outputDocuments: import('./document.types').OutputDocument[];
   /** Combined structured context produced by the ingest stage (M7). */
   ingestContext: string;
-  /** Target language for localization stage */
+  /** @deprecated Retained for persisted-state compatibility; use the standalone localization run state. */
   targetLanguage: import('./document.types').LocalizeLanguage;
   /**
    * 文档大纲：文档撰写阶段的章节结构（可自定义，不再固定模板）。
@@ -96,12 +101,7 @@ export interface DocGenState {
    * 单文件可通过 UploadedFile.parseInstruction 覆盖。
    */
   parseInstruction?: string;
-  /**
-   * When true, the localization stages (localize / review_localize /
-   * localize_ai_review / human_localize_review) are skipped and the pipeline
-   * jumps directly from human_confirm to dita_build, building DITA from the
-   * (possibly human-edited) English drafts.
-   */
+  /** @deprecated Retained for persisted-state compatibility; Gen Doc always builds DITA from reviewed drafts. */
   skipLocalization: boolean;
   /** Accumulated workflow logs */
   workflowLogs: WorkflowLogEntry[];

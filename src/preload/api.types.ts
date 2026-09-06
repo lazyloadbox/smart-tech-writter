@@ -6,6 +6,8 @@ import type {
   HumanDitaSubmitPayload,
   ReviewContinuePayload,
   AiEditDraftPayload,
+  WorkflowAiEditArtifactPayload,
+  AiEditArtifactPayload,
   WorkflowProgressEvent,
   WorkflowGoBackPayload,
   WorkflowStreamEvent,
@@ -53,6 +55,7 @@ export interface ElectronAPI {
     submitHumanDita(payload: HumanDitaSubmitPayload): Promise<void>;
     reviewContinue(payload: ReviewContinuePayload): Promise<void>;
     aiEditDraft(payload: AiEditDraftPayload): Promise<string>;
+    aiEditArtifact(payload: WorkflowAiEditArtifactPayload): Promise<string>;
     onProgress(
       callback: (event: WorkflowProgressEvent) => void
     ): () => void;
@@ -104,6 +107,7 @@ export interface ElectronAPI {
     continue(payload: LocalizeContinuePayload): Promise<void>;
     submitHumanLocalizeReview(payload: LocalizeHumanLocalizeSubmitPayload): Promise<void>;
     submitHumanConfirm(payload: LocalizeHumanConfirmSubmitPayload): Promise<void>;
+    aiEditArtifact(payload: AiEditArtifactPayload): Promise<string>;
     goBack(payload: LocalizeGoBackPayload): Promise<void>;
     listRuns(): Promise<LocalizeRun[]>;
     getRun(runId: string): Promise<LocalizeRunState | null>;

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import type { UploadedFile } from '../../../../shared/types/document.types';
+import { en as ui, formatUi } from '../../../../shared/i18n';
 
 interface FilePreviewModalProps {
   file: UploadedFile | null;
@@ -58,13 +59,13 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
       if (file.extractedText) {
         setContent(file.extractedText);
       } else {
-        setError('该文件类型暂无已提取的文本预览（解析阶段未保存原文文本）。');
+        setError(ui.filePreview.noExtractedText);
       }
       return;
     }
 
     if (kind === 'image') {
-      setError('图片文件预览暂不支持。');
+      setError(ui.filePreview.imageUnsupported);
       return;
     }
 
@@ -81,7 +82,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(`读取文件失败: ${err instanceof Error ? err.message : String(err)}`);
+          setError(formatUi(ui.filePreview.readFailed, { error: err instanceof Error ? err.message : String(err) }));
           setLoading(false);
         }
       });
@@ -103,11 +104,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
   if (!file) return null;
 
   const kindLabel =
-    kind === 'pdf' ? 'PDF 文档' :
-    kind === 'word' ? 'Word 文档' :
-    kind === 'email' ? '邮件 (.eml)' :
-    kind === 'code' ? `代码 (${CODE_LANG_LABEL[file.path.split('.').pop()?.toLowerCase() ?? ''] ?? '源码'})` :
-    kind === 'image' ? '图片' : '文本文件';
+    kind === 'pdf' ? ui.filePreview.pdf :
+    kind === 'word' ? ui.filePreview.word :
+    kind === 'email' ? ui.filePreview.email :
+    kind === 'code' ? formatUi(ui.filePreview.code, { language: CODE_LANG_LABEL[file.path.split('.').pop()?.toLowerCase() ?? ''] ?? ui.filePreview.sourceCode }) :
+    kind === 'image' ? ui.filePreview.image : ui.filePreview.text;
 
   return (
     <div
@@ -128,7 +129,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
           <button
             onClick={onClose}
             className="shrink-0 text-gray-400 hover:text-red-400 text-lg leading-none px-2"
-            title="关闭 (Esc)"
+            title={ui.filePreview.closeEsc}
           >
             ✕
           </button>
@@ -139,7 +140,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
           {loading && (
             <div className="flex items-center gap-2 text-sm text-gray-400">
               <span className="inline-block w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-              正在读取文件内容...
+              {ui.filePreview.reading}
             </div>
           )}
           {error && (
@@ -153,14 +154,14 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
             </pre>
           )}
           {!loading && !error && !content && (
-            <p className="text-sm text-gray-500 text-center py-8">文件内容为空</p>
+            <p className="text-sm text-gray-500 text-center py-8">{ui.filePreview.empty}</p>
           )}
         </div>
 
         {/* Footer */}
         <div className="shrink-0 px-4 py-2 bg-gray-800 border-t border-gray-700 flex items-center justify-between text-[11px] text-gray-500">
-          <span>{content.length.toLocaleString()} 字符</span>
-          <span>按 Esc 关闭</span>
+          <span>{content.length.toLocaleString()} {ui.common.characters}</span>
+          <span>{ui.filePreview.closeHint}</span>
         </div>
       </div>
     </div>

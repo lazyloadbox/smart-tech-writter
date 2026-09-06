@@ -60,6 +60,14 @@ export const localizationApi = {
     });
     await getElectronApi().localization.submitHumanConfirm(payload);
   },
+  aiEditArtifact: async (
+    currentContent: string,
+    instruction: string,
+    format: import('../../shared/types/ipc.types').AiArtifactFormat = 'xml',
+  ): Promise<string> => {
+    console.info('[Localize][API] aiEditArtifact', { format, instructionLen: instruction.length });
+    return getElectronApi().localization.aiEditArtifact({ currentContent, instruction, format });
+  },
   goBack: async (stage: LocalizationStage): Promise<void> => {
     const payload: LocalizeGoBackPayload = { stage };
     console.info('[Localize][API] goBack', payload);

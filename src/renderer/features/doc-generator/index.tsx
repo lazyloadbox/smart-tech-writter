@@ -11,22 +11,53 @@ import { AIStreamViewer } from './components/AIStreamViewer';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { CollapsibleSection } from './components/CollapsibleSection';
 import { XmlHighlight } from './components/xml/XmlHighlight';
-import type { UploadedFile, LocalizeLanguage, DocumentOutline } from '../../../shared/types/document.types';
+import { AiArtifactChat } from './components/AiArtifactChat';
+import { AiDraftEditor } from './components/AiDraftEditor';
+import type { UploadedFile, DocumentOutline } from '../../../shared/types/document.types';
 import type { StageName } from '../../../shared/types/workflow.types';
+import { en as ui, formatUi, languageLabel } from '../../../shared/i18n';
+import { buildMarkdownArtifactBundle, extractMarkdownArtifact, fileExtractionToMarkdown } from '../../../shared/utils/artifact-markdown';
 
-const LANG_OPTIONS: { value: LocalizeLanguage; label: string }[] = [
-  { value: 'en', label: 'English（英文）' },
-  { value: 'zh-CN', label: '简体中文（中国大陆）' },
-  { value: 'zh-TW', label: '繁體中文（台灣 / 台湾）' },
-];
+function parsedFilesMarkdown(files: UploadedFile[]): string {
+  return buildMarkdownArtifactBundle(
+    files.map((file) => ({
+      id: file.id,
+      title: file.name,
+      markdown: file.parseMarkdown || file.parseExtraction?.markdown || fileExtractionToMarkdown(file.parseExtraction, file),
+    })),
+    'Reviewed file extraction bundle',
+  );
+}
 
 export const DocGeneratorTab: React.FC = () => {
-  const { state, startWorkflow, goBack, pause, resume, submitHumanReview, submitHumanConfirm, submitHumanLocalize, submitHumanDita, reviewContinue, setTargetLanguage } = useWorkflow();
+  const { state, startWorkflow, goBack, pause, resume, submitHumanReview, submitHumanDita, reviewContinue, aiEditArtifact } = useWorkflow();
   const [isStarting, setIsStarting] = useState(false);
   const [localFiles, setLocalFiles] = useState<UploadedFile[]>([]);
-  const [selectedLang, setSelectedLang] = useState<LocalizeLanguage>('zh-CN');
-  // Default to skipping localization (English-only docs); the standalone 本地化 feature handles DITA translation.
-  const [skipLocalize, setSkipLocalize] = useState(true);
+  // Local checkpoint edits remain visible while the user iterates in the chat;
+  // they are sent back through reviewContinue when the checkpoint is submitted.
+  const [reviewInputFiles, setReviewInputFiles] = useState<UploadedFile[] | null>(null);
+  const [reviewAnalysisResults, setReviewAnalysisResults] = useState<typeof state.analysisResults | null>(null);
+  const [reviewAnalysisSynthesis, setReviewAnalysisSynthesis] = useState<string | null>(null);
+  const [reviewReferences, setReviewReferences] = useState<typeof state.referenceSearchResults | null>(null);
+  const [reviewDrafts, setReviewDrafts] = useState<typeof state.drafts | null>(null);
+
+  useEffect(() => {
+    if (state.status === 'PAUSED:REVIEW_UPLOAD') setReviewInputFiles(state.inputFiles);
+    if (state.status === 'PAUSED:REVIEW_ANALYZE') {
+      setReviewAnalysisResults(state.analysisResults);
+      setReviewAnalysisSynthesis(state.analysisSynthesisMarkdown);
+      setReviewReferences(state.referenceSearchResults);
+    }
+    if (state.status === 'PAUSED:REVIEW_DRAFT') setReviewDrafts(state.drafts);
+  }, [
+    state.status,
+    state.currentStage,
+    state.inputFiles,
+    state.analysisResults,
+    state.analysisSynthesisMarkdown,
+    state.referenceSearchResults,
+    state.drafts,
+  ]);
 
   // Auto-scroll the running content area so the latest AI stream output stays visible.
   // Auto-scroll pauses when the user scrolls up, and resumes when they return to the bottom.
@@ -75,7 +106,7 @@ export const DocGeneratorTab: React.FC = () => {
       console.error('[WF][UI] Workflow start failed', err);
       state.setState({
         status: 'FAILED',
-        error: `启动工作流失败: ${message}`,
+        error: formatUi(ui.docGenerator.startWorkflowFailed, { message }),
       });
     } finally {
       setIsStarting(false);
@@ -84,8 +115,6 @@ export const DocGeneratorTab: React.FC = () => {
 
   const handleNewProject = () => {
     setLocalFiles([]);
-    setSkipLocalize(true);
-    setSelectedLang('zh-CN');
     state.reset();
   };
 
@@ -120,23 +149,10 @@ export const DocGeneratorTab: React.FC = () => {
             <WorkflowProgress
               stage={currentStage}
               status={status}
-              message={
-                currentStage === 'upload_parse' ? '正在读取并解析文件...' :
-                currentStage === 'ingest' ? '正在汇总结构化数据...' :
-                currentStage === 'analyze' ? 'AI 正在分析文档内容...' :
-                currentStage === 'draft' ? 'AI 正在生成文档草稿...' :
-                currentStage === 'ai_review' ? 'AI 正在进行质量审查...' :
-                currentStage === 'post_edit_review' ? 'AI 正在进行编辑后审查...' :
-                currentStage === 'localize' ? `AI 正在本地化为 ${
-                  state.targetLanguage === 'zh-TW' ? '繁體中文（台灣）' :
-                  state.targetLanguage === 'en' ? 'English（英文）' : '简体中文'
-                }...` :
-                currentStage === 'localize_ai_review' ? 'AI 正在审查本地化质量...' :
-                currentStage === 'dita_build' ? '正在生成 DITA XML 文档...' :
-                currentStage === 'dita_ai_review' ? 'AI 正在审查 DITA XML 结构...' :
-                currentStage === 'export' ? '正在写入 DITA 文件...' :
-                '处理中...'
-              }
+              message={formatUi(
+                ui.workflow.progress[currentStage as keyof typeof ui.workflow.progress] ?? ui.workflow.progress.default,
+                { language: languageLabel(state.targetLanguage) },
+              )}
             />
             {/* Back button — allow going back to previous stage */}
             {currentStage !== 'upload_parse' && (
@@ -145,8 +161,7 @@ export const DocGeneratorTab: React.FC = () => {
                   const stages: StageName[] = [
                     'upload_parse', 'review_upload', 'ingest', 'analyze', 'review_analyze',
                     'draft', 'review_draft', 'ai_review',
-                    'human_review', 'post_edit_review', 'human_confirm',
-                    'localize', 'review_localize', 'localize_ai_review', 'human_localize_review',
+                    'human_review',
                     'dita_build', 'review_dita', 'dita_ai_review', 'human_dita_review', 'export',
                   ];
                   const idx = stages.indexOf(currentStage);
@@ -154,16 +169,16 @@ export const DocGeneratorTab: React.FC = () => {
                 }}
                 className="shrink-0 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
               >
-                ↩ 返回上一步
+                ↩ {ui.common.backToPreviousStep}
               </button>
             )}
             {/* Pause button — cancels the in-flight AI call (M3) */}
             <button
               onClick={() => pause()}
               className="shrink-0 px-3 py-1.5 bg-yellow-700 hover:bg-yellow-600 text-gray-100 text-xs rounded transition-colors"
-              title="暂停当前 AI 调用，可从断点继续"
+              title={ui.docGenerator.pauseAiCallTitle}
             >
-              ⏸ 暂停
+              ⏸ {ui.docGenerator.pauseAiCall}
             </button>
           </div>
 
@@ -184,7 +199,7 @@ export const DocGeneratorTab: React.FC = () => {
             {/* File list during upload_parse stage */}
             {currentStage === 'upload_parse' && state.inputFiles.length > 0 && (
               <div className="space-y-1.5">
-                <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide">📂 待处理文件</p>
+                <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide">📂 {ui.docGenerator.pendingFiles}</p>
                 {state.inputFiles.map((f) => (
                   <div key={f.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded text-xs">
                     <span className="text-gray-300 truncate flex-1">📄 {f.name}</span>
@@ -194,9 +209,9 @@ export const DocGeneratorTab: React.FC = () => {
                       f.parseStatus === 'parsing' ? 'bg-blue-900/40 text-blue-300 animate-pulse' :
                       'bg-gray-700 text-gray-400'
                     }`}>
-                      {f.parseStatus === 'done' ? '✓ 完成' :
-                       f.parseStatus === 'error' ? '✗ 失败' :
-                       f.parseStatus === 'parsing' ? '⟳ 解析中' : '等待中'}
+                      {f.parseStatus === 'done' ? `✓ ${ui.docGenerator.fileComplete}` :
+                       f.parseStatus === 'error' ? `✗ ${ui.docGenerator.fileFailed}` :
+                       f.parseStatus === 'parsing' ? `⟳ ${ui.docGenerator.fileParsing}` : ui.docGenerator.fileWaiting}
                     </span>
                   </div>
                 ))}
@@ -214,7 +229,7 @@ export const DocGeneratorTab: React.FC = () => {
             {(currentStage === 'draft' || currentStage === 'ai_review') && state.drafts.length > 0 && (
               <CollapsibleSection
                 key={`draft-preview-${currentStage}`}
-                title="📝 草稿预览（实时更新）"
+                title={`📝 ${ui.docGenerator.draftPreview}`}
                 defaultExpanded={true}
               >
                 <DraftViewer drafts={state.drafts} />
@@ -224,7 +239,7 @@ export const DocGeneratorTab: React.FC = () => {
             {(currentStage === 'dita_build' || currentStage === 'dita_ai_review') && state.ditaDocuments.length > 0 && (
               <CollapsibleSection
                 key={`dita-preview-${currentStage}`}
-                title="📦 DITA XML 预览（实时更新）"
+                title={`📦 ${ui.docGenerator.ditaPreview}`}
                 defaultExpanded={true}
               >
                 {state.ditaDocuments.map((d) => (
@@ -239,20 +254,26 @@ export const DocGeneratorTab: React.FC = () => {
             {(currentStage === 'analyze' || currentStage === 'draft' || currentStage === 'ai_review') && state.analysisResults.length > 0 && (
               <CollapsibleSection
                 key={`analysis-${currentStage}`}
-                title="🔍 分析结果"
+                title={`🔍 ${ui.docGenerator.analysisResults}`}
                 defaultExpanded={false}
               >
                 <div className="space-y-2">
+                  {state.analysisSynthesisMarkdown && (
+                    <div className="p-3 bg-indigo-950/30 rounded border border-indigo-700/50">
+                      <div className="text-xs font-semibold text-indigo-300 mb-1">🧩 Cross-file synthesis</div>
+                      <MarkdownRenderer content={state.analysisSynthesisMarkdown} />
+                    </div>
+                  )}
                   {state.analysisResults.map((r) => (
                     <div key={r.fileId} className="p-3 bg-gray-800 rounded border border-gray-700">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-sm font-medium text-gray-200">📄 {r.fileName}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded">AI 解析</span>
+                        <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded">{ui.stream.analysisResult}</span>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1 leading-relaxed">{r.summary}</p>
+                      <MarkdownRenderer content={r.markdown || r.summary} />
                       {r.keyPoints && r.keyPoints.length > 0 && (
                         <div className="mt-2">
-                          <span className="text-[10px] font-medium text-gray-500 uppercase">关键要点</span>
+                          <span className="text-[10px] font-medium text-gray-500 uppercase">{ui.workflow.review.keyPoints}</span>
                           <ul className="list-disc list-inside text-xs text-gray-300 mt-0.5 space-y-0.5">
                             {r.keyPoints.map((kp, i) => (
                               <li key={i}>{kp}</li>
@@ -262,7 +283,7 @@ export const DocGeneratorTab: React.FC = () => {
                       )}
                       {r.technicalTerms && r.technicalTerms.length > 0 && (
                         <div className="mt-2">
-                          <span className="text-[10px] font-medium text-gray-500 uppercase">技术术语</span>
+                           <span className="text-[10px] font-medium text-gray-500 uppercase">{ui.workflow.review.technicalTerms}</span>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {r.technicalTerms.map((term) => (
                               <span key={term} className="px-1.5 py-0.5 bg-green-900/40 text-green-300 text-[10px] rounded border border-green-800/50">
@@ -291,7 +312,7 @@ export const DocGeneratorTab: React.FC = () => {
           {/* Fixed footer hint — always visible, no empty gap below */}
           <div className="shrink-0 px-6 py-2 border-t border-gray-700/60 bg-gray-900/70 flex items-center gap-2 text-xs text-gray-500">
             <span className="inline-block w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-            正在处理中，请稍候... 详细过程请查看下方日志面板
+            {ui.workflow.running.processingHint}
           </div>
         </div>
       );
@@ -302,15 +323,15 @@ export const DocGeneratorTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">⏸ 工作流已暂停</h2>
+            <h2 className="text-sm font-semibold text-gray-200">⏸ {ui.workflow.running.pausedTitle}</h2>
             <div className="flex-1" />
-            <span className="text-xs text-gray-400">当前阶段: {currentStage}</span>
+            <span className="text-xs text-gray-400">{formatUi(ui.docGenerator.pausedStage, { stage: ui.workflow.stages[currentStage] })}</span>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             <div className="p-4 bg-yellow-900/20 border border-yellow-700/50 rounded">
-              <p className="text-sm text-yellow-300">已取消进行中的 AI 调用，工作流停在断点处。</p>
+              <p className="text-sm text-yellow-300">{ui.workflow.running.pausedDescription}</p>
               <p className="text-xs text-gray-400 mt-1">
-                点击「继续」将从上次完成的阶段继续执行；也可以返回上一步重新开始。
+                {ui.workflow.running.pausedHint}
               </p>
             </div>
             <div className="flex gap-3">
@@ -318,7 +339,7 @@ export const DocGeneratorTab: React.FC = () => {
                 onClick={() => resume()}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors"
               >
-                ▶ 继续执行
+                ▶ {ui.workflow.running.resume}
               </button>
               {currentStage !== 'upload_parse' && (
                 <button
@@ -326,8 +347,7 @@ export const DocGeneratorTab: React.FC = () => {
                     const stages: StageName[] = [
                       'upload_parse', 'review_upload', 'ingest', 'analyze', 'review_analyze',
                       'draft', 'review_draft', 'ai_review',
-                      'human_review', 'post_edit_review', 'human_confirm',
-                      'localize', 'review_localize', 'localize_ai_review', 'human_localize_review',
+                      'human_review',
                       'dita_build', 'review_dita', 'dita_ai_review', 'human_dita_review', 'export',
                     ];
                     const idx = stages.indexOf(currentStage);
@@ -335,7 +355,7 @@ export const DocGeneratorTab: React.FC = () => {
                   }}
                   className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors"
                 >
-                  ↩ 返回上一步
+                  ↩ {ui.common.backToPreviousStep}
                 </button>
               )}
             </div>
@@ -349,22 +369,38 @@ export const DocGeneratorTab: React.FC = () => {
       const doneFiles = state.inputFiles.filter((f) => f.parseStatus === 'done');
       const errorFiles = state.inputFiles.filter((f) => f.parseStatus === 'error');
       const pendingFiles = state.inputFiles.filter((f) => f.parseStatus === 'pending' || f.parseStatus === 'parsing');
+      const editableFiles = reviewInputFiles ?? state.inputFiles;
+      const parsedFilesArtifact = parsedFilesMarkdown(editableFiles);
+      const applyParsedFilesArtifact = (content: string) => {
+        const nextFiles = editableFiles.map((original) => {
+          const markdown = extractMarkdownArtifact(content, original.id);
+          if (!markdown) throw new Error(`AI response must preserve the Markdown artifact for ${original.name}.`);
+          return {
+            ...original,
+            // File identity, path, status and raw source remain application
+            // controlled. Human/AI review edits the Markdown extraction only.
+            parseMarkdown: markdown,
+          };
+        });
+        setReviewInputFiles(nextFiles);
+      };
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">📂 文件解析结果 — 请确认后继续</h2>
+            <h2 className="text-sm font-semibold text-gray-200">📂 {ui.workflow.review.confirmParsedTitle}</h2>
             <div className="flex-1" />
-            <span className="text-xs text-gray-400">✅ {doneFiles.length} 个成功</span>
-            {errorFiles.length > 0 && <span className="text-xs text-red-400">❌ {errorFiles.length} 个失败</span>}
-            {pendingFiles.length > 0 && <span className="text-xs text-yellow-400">⏳ {pendingFiles.length} 个未完成</span>}
+            <span className="text-xs text-gray-400">✅ {formatUi(ui.workflow.review.readyCount, { count: doneFiles.length })}</span>
+            {errorFiles.length > 0 && <span className="text-xs text-red-400">❌ {formatUi(ui.workflow.review.errorCount, { count: errorFiles.length })}</span>}
+            {pendingFiles.length > 0 && <span className="text-xs text-yellow-400">⏳ {formatUi(ui.workflow.review.pendingCount, { count: pendingFiles.length })}</span>}
           </div>
           <div className="px-4 py-1.5 bg-blue-900/20 border-b border-blue-800/50 shrink-0">
             <p className="text-xs text-blue-300">
-              💡 将综合 {state.inputFiles.length} 个文件的内容，汇总生成 <span className="font-semibold text-blue-200">一份</span> 综合技术文档。
+              💡 {formatUi(ui.workflow.review.combinedFilesHint, { count: state.inputFiles.length })}
             </p>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {state.inputFiles.map((f) => (
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {editableFiles.map((f) => (
               <div key={f.id} className={`p-3 rounded border ${
                 f.parseStatus === 'done' ? 'bg-gray-800 border-green-700/50' :
                 f.parseStatus === 'error' ? 'bg-gray-800 border-red-700/50' :
@@ -377,26 +413,61 @@ export const DocGeneratorTab: React.FC = () => {
                     f.parseStatus === 'error' ? 'bg-red-900/40 text-red-300' :
                     'bg-yellow-900/40 text-yellow-300'
                   }`}>
-                    {f.parseStatus === 'done' ? '已完成' : f.parseStatus === 'error' ? '失败' : '处理中'}
+                    {f.parseStatus === 'done' ? ui.common.completed : f.parseStatus === 'error' ? ui.common.failed : ui.common.inProgress}
                   </span>
                 </div>
                 {f.parseSummary && <p className="text-xs text-gray-400 mt-1">📝 {f.parseSummary}</p>}
+                {f.parseExtraction && f.parseExtraction.items.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">
+                      🔎 Extracted information ({f.parseExtraction.items.length})
+                    </summary>
+                    <ul className="mt-1 space-y-1 rounded bg-gray-900 p-2 text-xs text-gray-400">
+                      {f.parseExtraction.items.slice(0, 20).map((item, index) => (
+                        <li key={`${item.title}-${index}`}>
+                          <span className="text-gray-300">[{item.importance}] {item.title}:</span> {item.content}
+                          {item.sourceLocation && <span className="text-gray-600"> · {item.sourceLocation}</span>}
+                        </li>
+                      ))}
+                      {f.parseExtraction.items.length > 20 && <li className="text-gray-600">…more extracted items</li>}
+                    </ul>
+                  </details>
+                )}
+                {f.parseExtraction && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">
+                      ▤ Full extraction Markdown (reviewable)
+                    </summary>
+                    <div className="mt-2 max-h-[60vh] min-h-0 overflow-auto rounded bg-gray-950 border border-gray-700">
+                      <pre className="p-3 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-gray-300 font-mono">
+                        {f.parseMarkdown || f.parseExtraction.markdown || fileExtractionToMarkdown(f.parseExtraction, f)}
+                      </pre>
+                    </div>
+                  </details>
+                )}
                 {f.parseError && <p className="text-xs text-red-400 mt-1">⚠ {f.parseError}</p>}
                 {f.extractedText && (
                   <details className="mt-2">
-                    <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">查看提取的文本 ({f.extractedText.length} 字符)</summary>
-                    <pre className="mt-1 p-2 bg-gray-900 rounded text-xs text-gray-400 max-h-48 overflow-y-auto whitespace-pre-wrap">{f.extractedText.slice(0, 2000)}{f.extractedText.length > 2000 ? '\n... (截断)' : ''}</pre>
+                    <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">{formatUi(ui.docGenerator.showExtractedText, { count: f.extractedText.length })}</summary>
+                    <pre className="mt-1 p-2 bg-gray-900 rounded text-xs text-gray-400 max-h-48 overflow-y-auto whitespace-pre-wrap">{f.extractedText.slice(0, 2000)}{f.extractedText.length > 2000 ? `\n${ui.docGenerator.truncated}` : ''}</pre>
                   </details>
                 )}
               </div>
             ))}
+            </div>
+            <AiArtifactChat
+              currentContent={parsedFilesArtifact}
+              artifactLabel={ui.workflow.stages.review_upload}
+              onAiEdit={(content, instruction) => aiEditArtifact(content, instruction, 'markdown', 'review_upload')}
+              onApply={applyParsedFilesArtifact}
+            />
           </div>
           <div className="shrink-0 border-t border-gray-700 bg-gray-800 px-4 py-3 flex items-center gap-3">
             <button onClick={() => handleGoBack('upload_parse')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors">
-              ↩ 返回重新解析
+              ↩ {ui.workflow.review.backToParse}
             </button>
-            <button onClick={() => reviewContinue('review_upload')} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
-              ▶ 确认，继续汇总数据
+            <button onClick={() => reviewContinue('review_upload', { editedInputFiles: editableFiles })} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
+              ▶ {ui.workflow.review.confirmAssemble}
             </button>
           </div>
         </div>
@@ -405,27 +476,56 @@ export const DocGeneratorTab: React.FC = () => {
 
     // ─── Review: Analyze (after analyze, before draft) ───
     if (status === 'PAUSED:REVIEW_ANALYZE') {
+      const editableAnalysis = reviewAnalysisResults ?? state.analysisResults;
+      const editableSynthesis = reviewAnalysisSynthesis ?? state.analysisSynthesisMarkdown;
+      const editableReferences = reviewReferences ?? state.referenceSearchResults;
+      const analysisArtifact = `${buildMarkdownArtifactBundle([
+        ...editableAnalysis.map((result) => ({
+          id: result.fileId,
+          title: result.fileName,
+          markdown: result.markdown || `# Content analysis: ${result.fileName}\n\n${result.summary}`,
+        })),
+        { id: '__cross_file_synthesis__', title: 'Cross-file synthesis', markdown: editableSynthesis || 'No cross-file synthesis was produced.' },
+      ], 'Reviewed content analysis bundle')}\n\n## Reference search results\n\n${editableReferences.length > 0
+        ? editableReferences.map((ref) => `- **${ref.fileName}** (${ref.relevanceScore}%): ${ref.snippet}`).join('\n')
+        : 'None recorded.'}`;
+      const applyAnalysisArtifact = (content: string) => {
+        const nextAnalysis = editableAnalysis.map((original) => {
+          const markdown = extractMarkdownArtifact(content, original.fileId);
+          if (!markdown) throw new Error(`AI response must preserve the Markdown analysis for ${original.fileName}.`);
+          return { ...original, markdown };
+        });
+        setReviewAnalysisResults(nextAnalysis);
+        const synthesis = extractMarkdownArtifact(content, '__cross_file_synthesis__');
+        if (!synthesis) throw new Error('AI response must preserve the cross-file synthesis Markdown.');
+        setReviewAnalysisSynthesis(synthesis);
+      };
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">🔍 AI 分析结果 — 请确认后继续</h2>
+            <h2 className="text-sm font-semibold text-gray-200">🔍 {ui.workflow.review.analysisTitle}</h2>
             <div className="flex-1" />
-            <span className="text-xs text-gray-400">{state.analysisResults.length} 个文件已分析</span>
+            <span className="text-xs text-gray-400">{formatUi(ui.workflow.review.analyzedCount, { count: state.analysisResults.length })}</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {state.analysisResults.length === 0 && (
-              <p className="text-sm text-gray-500 text-center py-8">暂无分析结果</p>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {editableAnalysis.length === 0 && (
+              <p className="text-sm text-gray-500 text-center py-8">{ui.workflow.review.noAnalysis}</p>
             )}
-            {state.analysisResults.map((r) => (
+            <div className="p-4 bg-indigo-950/30 rounded border border-indigo-700/50">
+              <div className="text-xs font-semibold text-indigo-300 mb-2">🧩 Cross-file synthesis</div>
+              <MarkdownRenderer content={editableSynthesis || 'No cross-file synthesis was produced.'} />
+            </div>
+            {editableAnalysis.map((r) => (
               <div key={r.fileId} className="p-4 bg-gray-800 rounded border border-gray-700">
                 <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
                   <span className="text-sm font-medium text-gray-200">📄 {r.fileName}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded">AI 分析</span>
+                  <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/40 text-purple-300 rounded">{ui.workflow.review.analysis}</span>
                 </div>
-                <p className="text-sm text-gray-300 leading-relaxed mb-3">{r.summary}</p>
+                <MarkdownRenderer content={r.markdown || r.summary} />
                 {r.keyPoints && r.keyPoints.length > 0 && (
                   <div className="mb-3">
-                    <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">关键要点</span>
+                    <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">{ui.workflow.review.keyPoints}</span>
                     <ul className="list-disc list-inside text-xs text-gray-300 mt-1 space-y-0.5">
                       {r.keyPoints.map((kp, i) => <li key={i}>{kp}</li>)}
                     </ul>
@@ -433,7 +533,7 @@ export const DocGeneratorTab: React.FC = () => {
                 )}
                 {r.technicalTerms && r.technicalTerms.length > 0 && (
                   <div className="mb-3">
-                    <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">技术术语</span>
+                    <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">{ui.workflow.review.technicalTerms}</span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {r.technicalTerms.map((term) => (
                         <span key={term} className="px-1.5 py-0.5 bg-green-900/40 text-green-300 text-[10px] rounded border border-green-800/50">{term}</span>
@@ -443,7 +543,7 @@ export const DocGeneratorTab: React.FC = () => {
                 )}
                 {r.keywords.length > 0 && (
                   <div>
-                    <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">关键词</span>
+                    <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">{ui.workflow.review.keywords}</span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {r.keywords.map((kw) => (
                         <span key={kw} className="px-1.5 py-0.5 bg-blue-900/50 text-blue-300 text-[10px] rounded">{kw}</span>
@@ -453,11 +553,11 @@ export const DocGeneratorTab: React.FC = () => {
                 )}
               </div>
             ))}
-            {state.referenceSearchResults.length > 0 && (
+            {editableReferences.length > 0 && (
               <div className="mt-4">
-                <p className="text-xs font-semibold text-gray-400 mb-2">📚 参考资料 ({state.referenceSearchResults.length} 份)</p>
+                <p className="text-xs font-semibold text-gray-400 mb-2">📚 {ui.workflow.review.references} ({editableReferences.length})</p>
                 <div className="space-y-2">
-                  {state.referenceSearchResults.map((ref, i) => (
+                  {editableReferences.map((ref, i) => (
                     <div key={i} className="p-2.5 bg-gray-800/50 rounded border border-gray-700">
                       <p className="text-xs font-medium text-gray-300">{ref.fileName}</p>
                       <p className="text-[11px] text-gray-500 mt-0.5">{ref.snippet}</p>
@@ -466,13 +566,24 @@ export const DocGeneratorTab: React.FC = () => {
                 </div>
               </div>
             )}
+            </div>
+            <AiArtifactChat
+              currentContent={analysisArtifact}
+              artifactLabel={ui.workflow.stages.review_analyze}
+              onAiEdit={(content, instruction) => aiEditArtifact(content, instruction, 'markdown', 'review_analyze')}
+              onApply={applyAnalysisArtifact}
+            />
           </div>
           <div className="shrink-0 border-t border-gray-700 bg-gray-800 px-4 py-3 flex items-center gap-3">
             <button onClick={() => handleGoBack('analyze')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors">
-              ↩ 返回重新分析
+              ↩ {ui.workflow.review.backToAnalyze}
             </button>
-            <button onClick={() => reviewContinue('review_analyze')} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
-              ▶ 确认，开始生成草稿
+            <button onClick={() => reviewContinue('review_analyze', {
+              editedAnalysisResults: editableAnalysis,
+              editedAnalysisSynthesisMarkdown: editableSynthesis,
+              editedReferenceSearchResults: editableReferences,
+            })} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
+              ▶ {ui.workflow.review.generateDraft}
             </button>
           </div>
         </div>
@@ -481,71 +592,27 @@ export const DocGeneratorTab: React.FC = () => {
 
     // ─── Review: Draft (after draft, before ai_review) ───
     if (status === 'PAUSED:REVIEW_DRAFT') {
+      const editableDrafts = reviewDrafts ?? state.drafts;
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">✍️ AI 生成草稿 — 请审阅后继续</h2>
+            <h2 className="text-sm font-semibold text-gray-200">✍️ {ui.workflow.review.draftTitle}</h2>
             <div className="flex-1" />
-            <span className="text-xs text-gray-400">{state.drafts.length} 篇草稿</span>
+            <span className="text-xs text-gray-400">{formatUi(ui.workflow.review.draftCount, { count: state.drafts.length })}</span>
           </div>
           <div className="flex-1 overflow-hidden">
-            <DraftViewer drafts={state.drafts} />
+            <AiDraftEditor
+              drafts={editableDrafts}
+              onDraftsChange={setReviewDrafts}
+              onAiEdit={(content, instruction) => aiEditArtifact(content, instruction, 'markdown', 'review_draft')}
+            />
           </div>
           <div className="shrink-0 border-t border-gray-700 bg-gray-800 px-4 py-3 flex items-center gap-3">
             <button onClick={() => handleGoBack('draft')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors">
-              ↩ 返回重新生成
+              ↩ {ui.workflow.review.regenerate}
             </button>
-            <button onClick={() => reviewContinue('review_draft')} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
-              ▶ 确认，进入 AI 质量审查
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    // ─── Review: Localize (after localize, before localize_ai_review) ───
-    if (status === 'PAUSED:REVIEW_LOCALIZE') {
-      return (
-        <div className="flex flex-col h-full overflow-hidden">
-          <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">🌐 AI 本地化结果 — 请审阅后继续</h2>
-            <div className="flex-1" />
-            <span className="text-xs text-gray-400">{state.localizedDrafts.length} 篇本地化草稿</span>
-          </div>
-          <div className="flex-1 flex overflow-hidden">
-            {/* Original */}
-            <div className="flex-1 border-r border-gray-700 overflow-y-auto p-4">
-              <p className="text-xs text-gray-400 mb-2 font-semibold">📄 原文（只读）</p>
-              {state.drafts.length === 0 && (
-                <p className="text-xs text-gray-500 text-center py-4">暂无原文</p>
-              )}
-              {state.drafts.map((d) => (
-                <div key={d.id} className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
-                  <MarkdownRenderer content={d.content} />
-                </div>
-              ))}
-            </div>
-            {/* Localized */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <p className="text-xs text-gray-400 mb-2 font-semibold">🌐 本地化结果</p>
-              {state.localizedDrafts.length === 0 && (
-                <p className="text-xs text-gray-500 text-center py-4">暂无本地化结果</p>
-              )}
-              {state.localizedDrafts.map((d) => (
-                <div key={d.id} className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
-                  <MarkdownRenderer content={d.content} />
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="shrink-0 border-t border-gray-700 bg-gray-800 px-4 py-3 flex items-center gap-3">
-            <button onClick={() => handleGoBack('localize')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors">
-              ↩ 返回重新本地化
-            </button>
-            <button onClick={() => reviewContinue('review_localize')} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
-              ▶ 确认，进入本地化质量审查
+            <button onClick={() => reviewContinue('review_draft', { editedDrafts: editableDrafts })} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
+              ▶ {ui.workflow.review.beginQualityReview}
             </button>
           </div>
         </div>
@@ -557,13 +624,13 @@ export const DocGeneratorTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Stage 5 — 人工审查 AI 建议</h2>
+            <h2 className="text-sm font-semibold text-gray-200">{ui.workflow.review.humanReviewTitle}</h2>
             <div className="flex-1" />
             <button
               onClick={() => handleGoBack('ai_review')}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
             >
-              ↩ 返回 AI Review
+              ↩ {ui.workflow.review.backToAiReview}
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -571,133 +638,10 @@ export const DocGeneratorTab: React.FC = () => {
               drafts={state.drafts}
               comments={state.aiReviewComments}
               onSubmit={submitHumanReview}
-              title="Stage 5 — 人工审查 AI 建议"
-              submitLabel="提交编辑，进入编辑后审查 ▶"
-            />
-          </div>
-        </div>
-      );
-    }
-
-    // Human Confirm (Stage 6b) — with language selection
-    if (status === 'PAUSED:HUMAN_CONFIRM') {
-      // Multi-draft (M1): prefer per-draft human edits; fall back to the
-      // legacy single-string humanEdits applied to drafts[0].
-      const confirmDrafts = state.humanEditedDrafts?.length
-        ? state.humanEditedDrafts
-        : state.humanEdits
-          ? state.drafts.map((d, i) => i === 0 ? { ...d, content: state.humanEdits } : d)
-          : state.drafts;
-
-      const langFooter = (
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs font-medium text-gray-300 whitespace-nowrap">🌐 目标语言</span>
-          <div className="flex flex-wrap gap-1.5">
-            {LANG_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  setSelectedLang(opt.value);
-                  setTargetLanguage(opt.value);
-                  setSkipLocalize(false);
-                }}
-                disabled={skipLocalize}
-                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                  !skipLocalize && selectedLang === opt.value
-                    ? 'bg-blue-600 text-white'
-                    : skipLocalize
-                      ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                {opt.label.split('（')[0]}
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-1.5 ml-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={skipLocalize}
-              onChange={(e) => setSkipLocalize(e.target.checked)}
-              className="w-3.5 h-3.5 accent-blue-500"
-            />
-            <span className="text-xs text-gray-300">跳过本地化（直接用英文草稿生成 DITA）</span>
-          </label>
-        </div>
-      );
-
-      return (
-        <div className="flex flex-col h-full overflow-hidden">
-          {/* Fixed header */}
-          <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Stage 6b — 人工确认 & 选择本地化语言</h2>
-            <div className="flex-1" />
-            <button
-              onClick={() => handleGoBack('post_edit_review')}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
-            >
-              ↩ 返回编辑后审查
-            </button>
-          </div>
-
-          {/* ReviewPanel: left = AI comments (accept/reject), right = editable draft */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <ReviewPanel
-              drafts={confirmDrafts}
-              comments={state.postEditReviewComments}
-              onSubmit={(editedDrafts, acceptedIds) =>
-                submitHumanConfirm(true, selectedLang, editedDrafts, acceptedIds, skipLocalize)
-              }
-              title="Stage 6b — AI 审查建议（可接受/撤销）& 草稿编辑"
-              submitLabel={
-                skipLocalize
-                  ? '⏭ 跳过本地化，直接生成 DITA ▶'
-                  : `✅ 确认，本地化为 ${LANG_OPTIONS.find((o) => o.value === selectedLang)?.label.split('（')[0] ?? selectedLang} ▶`
-              }
-              footerLeft={langFooter}
-            />
-          </div>
-        </div>
-      );
-    }
-
-    // Human Localize Review (Stage 7b)
-    if (status === 'PAUSED:HUMAN_LOCALIZE_REVIEW') {
-      return (
-        <div className="flex flex-col h-full overflow-hidden">
-          <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Stage 7b — 人工本地化审核</h2>
-            <div className="flex-1" />
-            <button
-              onClick={() => handleGoBack('localize_ai_review')}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
-            >
-              ↩ 返回本地化审查
-            </button>
-          </div>
-          <div className="flex-1 flex overflow-hidden">
-            {/* Original */}
-            <div className="flex-1 border-r border-gray-700 overflow-y-auto p-4">
-              <p className="text-xs text-gray-400 mb-2 font-semibold">📄 原文（只读）</p>
-              {state.drafts.length === 0 && (
-                <p className="text-xs text-gray-500 text-center py-4">暂无原文</p>
-              )}
-              {state.drafts.map((d) => (
-                <div key={d.id} className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-200 mb-2">{d.title}</h3>
-                  <MarkdownRenderer content={d.content} />
-                </div>
-              ))}
-            </div>
-            {/* Localized + Review */}
-            <ReviewPanel
-              drafts={state.localizedDrafts}
-              comments={state.localizeReviewComments}
-              onSubmit={(editedDrafts, accepted) =>
-                submitHumanLocalize(editedDrafts, accepted)
-              }
-              title="本地化结果（可编辑）"
-              submitLabel="确认完成，进入 DITA 生成 ▶"
+              onAiEdit={(content, instruction) => aiEditArtifact(content, instruction, 'markdown', 'human_review')}
+              aiArtifactLabel={ui.workflow.stages.human_review}
+              title={ui.workflow.review.humanReviewTitle}
+              submitLabel={`${ui.workflow.review.submitEdits} ▶`}
             />
           </div>
         </div>
@@ -709,32 +653,26 @@ export const DocGeneratorTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">📦 DITA XML 生成结果 — 请审阅后继续</h2>
+            <h2 className="text-sm font-semibold text-gray-200">📦 {ui.workflow.review.ditaTitle}</h2>
             <div className="flex-1" />
-            <span className="text-xs text-gray-400">{state.ditaDocuments.length} 个 DITA 文档</span>
+            <span className="text-xs text-gray-400">{formatUi(ui.workflow.review.ditaCount, { count: state.ditaDocuments.length })}</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {state.ditaDocuments.length === 0 && (
-              <p className="text-sm text-gray-500 text-center py-8">暂无 DITA 文档</p>
-            )}
-            {state.ditaDocuments.map((d) => (
-              <div key={d.id} className="p-3 bg-gray-800 rounded border border-gray-700">
-                <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
-                  <span className="text-sm font-medium text-gray-200">📄 {d.title}.dita</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-orange-900/40 text-orange-300 rounded">DITA XML</span>
-                  <span className="text-[10px] text-gray-500 ml-auto">{d.content.length} 字符</span>
-                </div>
-                <XmlHighlight code={d.content} className="max-h-96" />
-              </div>
-            ))}
-          </div>
-          <div className="shrink-0 border-t border-gray-700 bg-gray-800 px-4 py-3 flex items-center gap-3">
-            <button onClick={() => handleGoBack('dita_build')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors">
-              ↩ 返回重新生成
-            </button>
-            <button onClick={() => reviewContinue('review_dita')} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
-              ▶ 确认，进入 DITA AI 审查
-            </button>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ReviewPanel
+              drafts={state.ditaDocuments}
+              comments={[]}
+              onSubmit={(editedDitaDocuments) => reviewContinue('review_dita', { editedDitaDocuments })}
+              onAiEdit={(content, instruction) => aiEditArtifact(content, instruction, 'xml', 'review_dita')}
+              aiArtifactLabel={ui.workflow.stages.review_dita}
+              title={ui.workflow.review.ditaTitle}
+              submitLabel={`▶ ${ui.workflow.review.beginDitaReview}`}
+              editorMode="xml"
+              footerLeft={
+                <button onClick={() => handleGoBack('dita_build')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors">
+                  ↩ {ui.workflow.review.regenerate}
+                </button>
+              }
+            />
           </div>
         </div>
       );
@@ -745,13 +683,13 @@ export const DocGeneratorTab: React.FC = () => {
       return (
         <div className="flex flex-col h-full overflow-hidden">
           <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-200">Stage 8c — 人工 DITA 审核</h2>
+            <h2 className="text-sm font-semibold text-gray-200">{ui.workflow.review.humanDitaTitle}</h2>
             <div className="flex-1" />
             <button
               onClick={() => handleGoBack('dita_ai_review')}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors"
             >
-              ↩ 返回 DITA AI 审查
+              ↩ {ui.workflow.review.backToDitaReview}
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -761,8 +699,10 @@ export const DocGeneratorTab: React.FC = () => {
               onSubmit={(editedDrafts, accepted) =>
                 submitHumanDita(editedDrafts, accepted)
               }
-              title="DITA XML（可编辑）"
-              submitLabel="确认完成，导出 DITA 文件 ▶"
+              onAiEdit={(content, instruction) => aiEditArtifact(content, instruction, 'xml', 'human_dita_review')}
+              aiArtifactLabel={ui.workflow.stages.human_dita_review}
+              title={ui.workflow.review.ditaEditable}
+              submitLabel={`${ui.workflow.review.exportDita} ▶`}
               editorMode="xml"
             />
           </div>
@@ -787,8 +727,7 @@ export const DocGeneratorTab: React.FC = () => {
         const stages: StageName[] = [
           'upload_parse', 'review_upload', 'ingest', 'analyze', 'review_analyze',
           'draft', 'review_draft', 'ai_review',
-          'human_review', 'post_edit_review', 'human_confirm',
-          'localize', 'review_localize', 'localize_ai_review', 'human_localize_review',
+          'human_review',
           'dita_build', 'review_dita', 'dita_ai_review', 'human_dita_review', 'export',
         ];
         const idx = stages.indexOf(currentStage);
@@ -798,7 +737,7 @@ export const DocGeneratorTab: React.FC = () => {
       return (
         <div className="p-6 space-y-4">
           <div className="p-4 bg-red-900/30 border border-red-700 rounded">
-            <p className="text-red-400 font-medium">❌ 工作流失败</p>
+            <p className="text-red-400 font-medium">❌ {ui.workflow.review.workflowFailed}</p>
             {state.error && <p className="text-red-300 text-sm mt-1">{state.error}</p>}
           </div>
           <div className="flex gap-3">
@@ -807,11 +746,11 @@ export const DocGeneratorTab: React.FC = () => {
                 onClick={() => handleGoBack(prevStage)}
                 className="px-4 py-2 bg-yellow-700 hover:bg-yellow-600 text-sm text-gray-200 rounded transition-colors"
               >
-                ↩ 返回上一步重试
+                ↩ {ui.workflow.review.retryPrevious}
               </button>
             )}
             <button onClick={handleNewProject} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-sm text-gray-200 rounded">
-              重新开始
+              {ui.workflow.review.restart}
             </button>
           </div>
         </div>

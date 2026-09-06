@@ -10,12 +10,62 @@ export interface UploadedFile {
   parseError?: string;
   extractedText?: string;
   metadata?: FileMetadata;
-  parseSummary?: string; // AI-generated summary of extracted content
+  /** Short orientation text; detailed evidence lives in parseExtraction.items. */
+  parseSummary?: string;
+  /** Evidence-first extraction preserved for downstream analysis and review. */
+  parseExtraction?: FileExtractionResult;
+  /** Complete, human-reviewable Markdown extraction. This is the downstream source of truth. */
+  parseMarkdown?: string;
   /**
    * 用户为该文件单独指定的解析提示词（特殊处理），优先级高于全局解析提示词。
    * 用于指导文件解析 Agent 的解析思路、重点与分析设计。
    */
   parseInstruction?: string;
+}
+
+export type ExtractedItemCategory =
+  | 'fact'
+  | 'specification'
+  | 'requirement'
+  | 'procedure'
+  | 'component'
+  | 'interface'
+  | 'dependency'
+  | 'constraint'
+  | 'warning'
+  | 'example'
+  | 'term'
+  | 'other';
+
+export interface ExtractedDetail {
+  key: string;
+  value: string;
+}
+
+export interface ExtractedItem {
+  category: ExtractedItemCategory;
+  title: string;
+  content: string;
+  details: ExtractedDetail[];
+  sourceQuote?: string;
+  sourceLocation?: string;
+  importance: 'critical' | 'high' | 'normal';
+}
+
+export interface FileExtractionResult {
+  fileId: string;
+  fileName: string;
+  overview: string;
+  items: ExtractedItem[];
+  terminology: string[];
+  conflicts: string[];
+  unresolved: string[];
+  /** Complete Markdown artifact used for review and downstream transfer. */
+  markdown?: string;
+  coverage: {
+    totalChunks: number;
+    processedChunks: number;
+  };
 }
 
 export interface FileMetadata {
@@ -33,6 +83,16 @@ export interface AnalysisResult {
   keyPoints: string[];
   keywords: string[];
   technicalTerms: string[];
+  /** Structured evidence carried forward from file parsing when available. */
+  extractedItems?: ExtractedItem[];
+  /** Complete analytical Markdown artifact used by the writer and review UI. */
+  markdown?: string;
+}
+
+/** Cross-file synthesis produced after the per-file analytical pass. */
+export interface AnalysisBundle {
+  results: AnalysisResult[];
+  synthesisMarkdown: string;
 }
 
 export interface SearchResult {
@@ -90,6 +150,6 @@ export type LocalizeLanguage = 'en' | 'zh-CN' | 'zh-TW';
 
 export const LOCALIZE_LANGUAGE_LABELS: Record<LocalizeLanguage, string> = {
   en: 'English',
-  'zh-CN': '简体中文',
-  'zh-TW': '繁體中文（台灣）',
+  'zh-CN': 'Simplified Chinese (China)',
+  'zh-TW': 'Traditional Chinese (Taiwan)',
 };

@@ -10,37 +10,31 @@
 | 文件 | 角色 | 关键导出 |
 |---|---|---|
 | `state-machine.ts` | 纯函数阶段定义：顺序、暂停集合、状态派生 | `STAGE_ORDER`、`PAUSE_STAGES`、`getStatusForStage`、`nextStage` |
-| `pipeline.ts` | 11 个阶段执行器（纯函数，返回 `Partial<DocGenState>`） | `runUploadParseStage` … `runExportStage` |
+| `pipeline.ts` | 8 个 Gen Doc 阶段执行器（纯函数，返回 `Partial<DocGenState>`） | `runUploadParseStage` … `runExportStage` |
 | `langgraph/graph-state.ts` | LangGraph 状态 schema（`DocGenState` 去掉 facade 自有字段） | `WorkflowStateAnnotation`、`WorkflowGraphState` |
-| `langgraph/graph.ts` | StateGraph 构建：20 节点 + 9 个 `interrupt()` 暂停节点 + 条件边 | `buildWorkflowGraph()` |
+| `langgraph/graph.ts` | StateGraph 构建：14 个活动节点 + 7 个 `interrupt()` 暂停节点 | `buildWorkflowGraph()` |
 | `langgraph/emitter.ts` | 进度/流式事件广播 + 日志累积（经 `configurable.emitter` 注入节点） | `WorkflowEmitter`、`WorkflowEmitterImpl` |
 | `langgraph/checkpointer.ts` | SqliteSaver 懒加载单例（`userData/langgraph.db`，`thread_id = projectId`） | `getCheckpointer()` |
 | `index.ts` | `WorkflowEngine` facade：同步状态缓存、invoke 编排、go-back 重放、镜像持久化 | `WorkflowEngine` 类 |
 
-## 3.2 20 阶段全表（LangGraph 节点）
+## 3.2 Gen Doc 活动阶段全表（LangGraph 节点）
 
 | # | StageName | 类型 | 节点 | 状态映射 | 说明 |
 |---|---|---|---|---|---|
-| 0 | `upload_parse` | AI | 执行节点 | RUNNING | 读取器抽文本 → FileParserAgent 逐文件 AI 摘要 |
+| 0 | `upload_parse` | AI | 执行节点 | RUNNING | 读取器抽文本 → FileParserAgent 逐文件完整 Markdown 提炼 |
 | 0a | `review_upload` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_UPLOAD | 确认文件解析结果 |
-| 1 | `ingest` | 汇总 | 执行节点 | RUNNING | 汇总就绪文件为 `ingestContext`（元数据 + AI 摘要 + 提取文本，M7） |
+| 1 | `ingest` | 汇总 | 执行节点 | RUNNING | 汇总就绪文件为 Markdown `ingestContext`（完整提炼 + 原文基线，M7） |
 | 2 | `analyze` | AI | 执行节点 | RUNNING | RAG 检索 + AnalyzerAgent 分析 |
 | 2a | `review_analyze` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_ANALYZE | 确认分析结果 + 参考资料 |
 | 3 | `draft` | AI | 执行节点 | RUNNING | WriterAgent 生成 Markdown 草稿 |
 | 3a | `review_draft` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_DRAFT | 审阅草稿（可 AI 指令改稿） |
 | 4 | `ai_review` | AI | 执行节点 | RUNNING | ReviewerAgent（mode=ai_review） |
 | 5 | `human_review` | ⏸ 暂停 | `interrupt()` | PAUSED:HUMAN_REVIEW | 人工接受/拒绝 AI 建议、手改 |
-| 6 | `post_edit_review` | AI | 执行节点 | RUNNING | ReviewerAgent（mode=post_edit_review） |
-| 6b | `human_confirm` | ⏸ 暂停 | `interrupt()` | PAUSED:HUMAN_CONFIRM | 最终确认 + 选语言 + 可跳过本地化 |
-| 7 | `localize` | AI | 执行节点 | RUNNING | LocalizerAgent 翻译本地化 |
-| 7a | `review_localize` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_LOCALIZE | 原文 vs 本地化对照 |
-| 7b | `localize_ai_review` | AI | 执行节点 | RUNNING | ReviewerAgent（mode=localize_ai_review） |
-| 7c | `human_localize_review` | ⏸ 暂停 | `interrupt()` | PAUSED:HUMAN_LOCALIZE_REVIEW | 人工本地化审核 |
-| 8 | `dita_build` | 本地 | 执行节点 | RUNNING | Markdown → DITA XML（不落盘） |
-| 8a | `review_dita` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_DITA | 查看原始 DITA XML |
-| 8b | `dita_ai_review` | AI | 执行节点 | RUNNING | ReviewerAgent（mode=dita_ai_review） |
-| 8c | `human_dita_review` | ⏸ 暂停 | `interrupt()` | PAUSED:HUMAN_DITA_REVIEW | 人工 DITA 审核 |
-| 9 | `export` | 本地 | 执行节点 | COMPLETED | 写 `*.dita` 文件 + 置 COMPLETED |
+| 6 | `dita_build` | 本地 | 执行节点 | RUNNING | Markdown → DITA XML（不落盘） |
+| 6a | `review_dita` | ⏸ 暂停 | `interrupt()` | PAUSED:REVIEW_DITA | 查看原始 DITA XML |
+| 6b | `dita_ai_review` | AI | 执行节点 | RUNNING | ReviewerAgent（mode=dita_ai_review） |
+| 6c | `human_dita_review` | ⏸ 暂停 | `interrupt()` | PAUSED:HUMAN_DITA_REVIEW | 人工 DITA 审核 |
+| 7 | `export` | 本地 | 执行节点 | COMPLETED | 写 `*.dita` 文件 + 置 COMPLETED |
 
 ## 3.3 状态机视图
 
@@ -54,9 +48,7 @@ stateDiagram-v2
         REVIEW_UPLOAD --> REVIEW_ANALYZE: resumeFromHumanInput
         REVIEW_ANALYZE --> REVIEW_DRAFT
         REVIEW_DRAFT --> HUMAN_REVIEW
-        HUMAN_REVIEW --> HUMAN_CONFIRM
-        HUMAN_CONFIRM --> REVIEW_LOCALIZE
-        REVIEW_LOCALIZE --> HUMAN_LOCALIZE_REVIEW
+        HUMAN_REVIEW --> REVIEW_DITA
         HUMAN_LOCALIZE_REVIEW --> REVIEW_DITA
         REVIEW_DITA --> HUMAN_DITA_REVIEW
     }
@@ -82,9 +74,7 @@ flowchart TD
     E -- 是 --> F["interrupt({stage}) 抛出 GraphInterrupt<br/>图暂停，检查点落盘"]
     F --> G["resumeFromHumanInput(data)<br/>graph.invoke(new Command({resume:data}))"]
     G --> D
-    E -- 否 --> H{"human_confirm 且 skipLocalization?"}
-    H -- 是 --> I["条件边 → dita_build"]
-    H -- 否 --> J["顺序边 → 下一节点"]
+    E -- 否 --> H["顺序边 → dita_build"]
     D --> K["invoke 返回（暂停或完成）"]
     K --> L["hydrate: graph.getState → 派生 PAUSED/currentStage<br/>更新 stateCache + persistMirror"]
     L --> M["getState(projectId) 同步返回缓存<br/>重启后回退读 state_json 镜像"]
@@ -104,21 +94,18 @@ flowchart TD
 
 6. **同步 getState**：facade 维护 `stateCache`（emitter 每次进度事件更新 currentStage/status，invoke 完成后 `hydrate` 全量刷新）+ `projects.state_json` 镜像（重启后同步回退读取）。IPC 层无需改动。
 
-7. **跳过本地化**：`human_confirm` 节点恢复后，条件边按 `state.skipLocalization` 分支到 `dita_build` 或 `localize`。
+7. **Gen Doc 不再包含本地化分支**：`human_review` 恢复后直接进入 `dita_build`；多语言 DITA 翻译由独立 Localization 功能承接。
 
 ## 3.5 阶段执行器细节（pipeline.ts，未改动）
 
 | 执行器 | 关键行为 |
 |---|---|
-| `runUploadParseStage` | ① 逐文件 `createReader(path).read()` → `extractedText/metadata`，失败置 error；② 对 `parsing` 状态文件用 `FileParserAgent` 逐文件 AI 摘要（长文本走 map-reduce 分段摘要），JSON 解析失败则以整段文本为 summary |
-| `runIngestStage` | 汇总 done 文件为 `ingestContext`（元数据 + AI 摘要 + 提取文本拼接，M7）；AnalyzerAgent 优先使用，避免重复读取/摘要 |
-| `runAnalyzeStage` | ① 用 `parseSummary ?? name` 拼接查询串；② `ragService.search()` 取参考（默认最多 10 条，语义索引优先）；③ `AnalyzerAgent.execute`（每文件长文本走 map-reduce 摘要） |
-| `runDraftStage` | `WriterAgent` 合并全部文件的 analysisResults，生成 1 篇标题为「综合技术文档」的 Markdown（章节结构由 `documentOutline` 参数化） |
+| `runUploadParseStage` | ① 逐文件 `createReader(path).read()` → `extractedText/metadata`，失败置 error；② 对 `parsing` 状态文件用 `FileParserAgent` 逐文件完整 Markdown 提炼（长文本逐块处理） |
+| `runIngestStage` | 汇总 done 文件为 Markdown `ingestContext`（完整提炼 + 原文基线，M7）；AnalyzerAgent 原样使用，避免重复压缩 |
+| `runAnalyzeStage` | ① 用已解析内容检索参考资料；② `ragService.search()` 取参考；③ `AnalyzerAgent.execute` 产出逐文件 Markdown 分析和跨文件综合 Markdown |
+| `runDraftStage` | `WriterAgent` 合并全部文件分析 Markdown 和跨文件综合 Markdown，生成 1 篇标题为「综合技术文档」的 Markdown |
 | `runAiReviewStage` | `ReviewerAgent(mode:'ai_review')` → `aiReviewComments` |
-| `runPostEditReviewStage` | `ReviewerAgent(mode:'post_edit_review')`，附带 humanEdits 备注 → `postEditReviewComments` |
-| `runLocalizeStage` | `LocalizerAgent`，按 `targetLanguage` 翻译每篇草稿 → `localizedDrafts` |
-| `runLocalizeAiReviewStage` | `ReviewerAgent(mode:'localize_ai_review')` → `localizeReviewComments` |
-| `runDitaBuildStage` | 源 = `localizedDrafts`（空则 `drafts`）；`buildDitaXml` → `ditaDocuments`（content 为 XML 文本，不落盘、不置 COMPLETED）；构建后 `validateDitaXml` 校验并输出警告 |
+| `runDitaBuildStage` | 源 = 人工审核后的 `drafts`；`buildDitaXml` → `ditaDocuments`（content 为 XML 文本，不落盘、不置 COMPLETED）；构建后 `validateDitaXml` 校验并输出警告 |
 | `runDitaAiReviewStage` | `ReviewerAgent(mode:'dita_ai_review')` → `ditaReviewComments` |
 | `runExportStage` | 优先 `ditaDocuments`（空则现场重建）；逐篇写 `userData/projects/<id>/<title>.dita` **并同时生成 `<title>.docx`**（`buildDocx`，M2）；返回 `{ outputDocuments, status:'COMPLETED', currentStage:'export' }` |
 
@@ -152,13 +139,7 @@ sequenceDiagram
     UI->>IPC: reviewContinue('review_draft'[, editedDrafts])
     G->>P: ai_review → ⏸ human_review
     UI->>IPC: submitHumanReview {editedDrafts, acceptedCommentIds}
-    G->>P: post_edit_review → ⏸ human_confirm
-    UI->>IPC: submitHumanConfirm {approved, targetLanguage, skipLocalization...}
-    alt skipLocalization = false
-        G->>P: localize → ⏸ review_localize → localize_ai_review → ⏸ human_localize_review
-    else skipLocalization = true
-        Note over G: 条件边直接跳到 dita_build
-    end
+    G->>P: dita_build（直接使用 human_review 后的 drafts）
     G->>P: dita_build → ⏸ review_dita → dita_ai_review → ⏸ human_dita_review
     UI->>IPC: submitHumanDita {editedDitaDocuments, accepted}
     G->>P: export → 写 .dita → COMPLETED

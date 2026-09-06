@@ -1,39 +1,13 @@
 import { BaseAgent } from './base.agent';
 import type { AIProvider } from '../ai-providers/base.provider';
 import type { AgentConfig } from './base.agent';
-import { PROMPTS, buildReviewFixPrompt, buildDitaReviewUserPrompt } from '../prompts';
+import { PROMPTS, buildDitaReviewUserPrompt } from '../prompts';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { ReviewComment, LocalizeLanguage } from '../../../shared/types/document.types';
-import { extractJsonArray } from './reviewer.agent';
+import { reviewCommentsContract } from '../ai-providers/output-contracts';
 import { v4 as uuidv4 } from 'uuid';
 
 export type DitaReviewMode = 'localize_ai_review' | 'post_edit_review';
-
-const VALID_TYPES = new Set<ReviewComment['type']>(['suggestion', 'error', 'warning', 'info']);
-
-/**
- * Parse an AI response into ReviewComment[] for a single DITA file.
- * All comments are pinned to the given `draftId` (the file's source path),
- * so the ReviewPanel can map them back to the right draft.
- */
-function tryParseComments(response: string, draftId: string): ReviewComment[] | null {
-  try {
-    const parsed: unknown = JSON.parse(extractJsonArray(response));
-    if (!Array.isArray(parsed)) return null;
-    return parsed.map((c: Partial<ReviewComment>): ReviewComment => ({
-      id: c.id ?? uuidv4(),
-      draftId,
-      type: VALID_TYPES.has(c.type as ReviewComment['type']) ? (c.type as ReviewComment['type']) : 'suggestion',
-      section: c.section,
-      originalText: c.originalText,
-      suggestedText: c.suggestedText,
-      explanation: c.explanation ?? '',
-      accepted: false,
-    }));
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Standalone DITA localization reviewer (independent feature).
@@ -83,17 +57,13 @@ export class DitaReviewerAgent extends BaseAgent {
     draftId: string,
     mappingContext?: string
   ): Promise<ReviewComment[]> {
-    const prompt = buildDitaReviewUserPrompt(originalXml, localizedXml, targetLanguage, this.mode, mappingContext);
-    const response = await this.callLLM(prompt, { maxTokens: 128000 });
-
-    let comments = tryParseComments(response, draftId);
-    if (!comments) {
-      const retry = await this.callLLM(buildReviewFixPrompt(response), { maxTokens: 128000 });
-      comments = tryParseComments(retry, draftId);
-    }
-    if (!comments) {
-      comments = [{ id: uuidv4(), draftId, type: 'info', explanation: response, accepted: false }];
-    }
-    return comments;
+    const prompt = `${buildDitaReviewUserPrompt(originalXml, localizedXml, targetLanguage, this.mode, mappingContext)}\nThe document ID for every returned comment is: ${draftId}`;
+    const parsed = await this.callStructuredLLM(prompt, reviewCommentsContract, { maxTokens: 128000 });
+    return parsed.map((comment) => ({
+      ...comment,
+      id: uuidv4(),
+      draftId,
+      accepted: false,
+    }));
   }
 }

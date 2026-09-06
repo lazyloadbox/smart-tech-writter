@@ -7,6 +7,7 @@ import { IPC_CHANNELS } from '../../shared/types/ipc.types';
 import type { WorkflowEngine } from '../modules/workflow/index';
 import { allowFileReadMany, assertFileReadAllowed } from '../modules/security/path-guard';
 import log from 'electron-log';
+import { en as ui } from '../../shared/i18n';
 
 export function registerFileHandlers(engine: WorkflowEngine): void {
   ipcMain.handle(IPC_CHANNELS.FILE_SELECT, async (event) => {
@@ -14,8 +15,8 @@ export function registerFileHandlers(engine: WorkflowEngine): void {
     const result = await dialog.showOpenDialog(win!, {
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Supported Files', extensions: ['docx', 'pdf', 'txt', 'md', 'markdown', 'csv', 'log', 'eml', 'ts', 'tsx', 'js', 'jsx', 'py', 'java', 'c', 'cpp', 'h', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'sh', 'bash', 'json', 'yaml', 'yml', 'xml', 'toml', 'ini', 'cfg'] },
-        { name: 'All Files', extensions: ['*'] },
+        { name: ui.backend.supportedFiles, extensions: ['docx', 'pdf', 'txt', 'md', 'markdown', 'csv', 'log', 'eml', 'ts', 'tsx', 'js', 'jsx', 'py', 'java', 'c', 'cpp', 'h', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'sh', 'bash', 'json', 'yaml', 'yml', 'xml', 'toml', 'ini', 'cfg'] },
+        { name: ui.backend.allFiles, extensions: ['*'] },
       ],
     });
     // Only files the user explicitly picked via the dialog may be read back.
@@ -41,7 +42,7 @@ export function registerFileHandlers(engine: WorkflowEngine): void {
     const win = BrowserWindow.fromWebContents(event.sender);
     const saveResult = await dialog.showSaveDialog(win!, {
       defaultPath: `project-${projectId.slice(0, 8)}-documents.zip`,
-      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+      filters: [{ name: ui.backend.zipArchive, extensions: ['zip'] }],
     });
     if (saveResult.canceled || !saveResult.filePath) return;
 
@@ -74,12 +75,12 @@ export function registerFileHandlers(engine: WorkflowEngine): void {
       defaultPath: fileName,
       filters: isDocx
         ? [
-            { name: 'Word 文档', extensions: ['docx'] },
-            { name: 'All Files', extensions: ['*'] },
+            { name: ui.backend.wordDocument, extensions: ['docx'] },
+            { name: ui.backend.allFiles, extensions: ['*'] },
           ]
         : [
-            { name: 'DITA XML', extensions: ['dita', 'xml'] },
-            { name: 'All Files', extensions: ['*'] },
+            { name: ui.backend.ditaXml, extensions: ['dita', 'xml'] },
+            { name: ui.backend.allFiles, extensions: ['*'] },
           ],
     });
     if (saveResult.canceled || !saveResult.filePath) return null;
@@ -101,7 +102,7 @@ export function registerFileHandlers(engine: WorkflowEngine): void {
     const win = BrowserWindow.fromWebContents(event.sender);
     const dirResult = await dialog.showOpenDialog(win!, {
       properties: ['openDirectory', 'createDirectory'],
-      title: '选择导出目录',
+      title: ui.backend.chooseOutputDirectory,
     });
     if (dirResult.canceled || dirResult.filePaths.length === 0) return null;
 
