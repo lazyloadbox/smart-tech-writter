@@ -58,11 +58,24 @@ jobs:
       - name: Bump version
         id: version
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUMP: ${{ inputs.bump }}
         run: |
-          if ("${{ github.event.inputs.version }}" -ne "") {
-            $newVersion = node scripts/bump-version.mjs "${{ github.event.inputs.version }}"
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $requestedVersion = $env:RELEASE_VERSION.Trim()
+          if ($requestedVersion -ne "") {
+            $newVersion = node scripts/bump-version.mjs $requestedVersion
           } else {
-            $newVersion = node scripts/bump-version.mjs "${{ github.event.inputs.bump }}"
+            $newVersion = node scripts/bump-version.mjs $env:RELEASE_BUMP
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "版本升级失败，请检查版本号或 bump 类型"
+          }
+          $newVersion = ($newVersion | Select-Object -Last 1).ToString().Trim()
+          if ($newVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "版本脚本输出无效: [$newVersion]"
           }
           Write-Output "newVersion=$newVersion" >> $env:GITHUB_OUTPUT
           Write-Output "New version: $newVersion"
@@ -94,15 +107,20 @@ jobs:
           $branch = "${{ github.ref_name }}"
           $tag = "v${{ steps.version.outputs.newVersion }}"
 
+          # 远程已存在同名 tag 时提前失败，避免构建后才发现版本不可发布。
+          git ls-remote --exit-code origin "refs/tags/$tag" | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "远程已存在 tag $tag，请更换版本号后重试" }
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull
           git add package.json package-lock.json
-          git commit -m "chore(release): v${{ steps.version.outputs.newVersion }}"
-
-          # 远程已存在同名 tag 时提前失败，避免推送到半更新的远程状态
-          git ls-remote --exit-code origin "refs/tags/$tag" | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw "远程已存在 tag $tag，请更换版本号后重试" }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore(release): v${{ steps.version.outputs.newVersion }}"
+          } else {
+            Write-Output "版本文件已经是 ${{ steps.version.outputs.newVersion }}，跳过空提交"
+          }
 
           # 先推分支：fetch + rebase 处理并发提交，被拒后重试
           $pushed = $false

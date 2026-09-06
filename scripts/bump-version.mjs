@@ -21,9 +21,10 @@ const lockPath = path.join(root, 'package-lock.json');
 const arg = (process.argv[2] || 'patch').trim();
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 const current = pkg.version;
+const isExplicitVersion = /^\d+\.\d+\.\d+$/.test(arg);
 
 let next;
-if (/^\d+\.\d+\.\d+$/.test(arg)) {
+if (isExplicitVersion) {
   next = arg;
 } else {
   const [major, minor, patch] = current.split('.').map(Number);
@@ -36,7 +37,10 @@ if (/^\d+\.\d+\.\d+$/.test(arg)) {
   }
 }
 
-if (next === current) {
+// 显式指定当前版本是幂等操作：这允许在版本已提前写入 package.json、
+// 但尚未创建 Git tag 的情况下继续发布，同时也能修复 package-lock.json。
+// bump 类型仍然必须产生新版本，避免误触发重复发布。
+if (next === current && !isExplicitVersion) {
   console.error(`版本未变化: ${current}（如需重新构建请使用 build 工作流）`);
   process.exit(1);
 }
@@ -47,8 +51,8 @@ writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 // 同步 package-lock.json 的版本（根 version + packages[""].version）
 try {
   const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-  if (lock.version) lock.version = next;
-  if (lock.packages && lock.packages[''] && lock.packages[''].version) {
+  if ('version' in lock) lock.version = next;
+  if (lock.packages && lock.packages['']) {
     lock.packages[''].version = next;
   }
   writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
