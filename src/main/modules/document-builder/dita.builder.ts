@@ -175,9 +175,12 @@ function blocksToDitaBody(blocks: Block[]): string {
   let currentSection: { title: string; bodyParts: string[] } | null = null;
 
   function flushSection(): void {
-    if (currentSection && currentSection.bodyParts.length > 0) {
+    // Keep title-only sections: dropping them silently made whole headings
+    // disappear from the generated DITA (and therefore from the exported
+    // section files), which looked like a data-loss bug in the split export.
+    if (currentSection && currentSection.title.trim()) {
       parts.push(`<section><title>${inlineMarkdownToDita(currentSection.title)}</title>`);
-      parts.push(...currentSection.bodyParts);
+      if (currentSection.bodyParts.length > 0) parts.push(...currentSection.bodyParts);
       parts.push('</section>');
     }
     currentSection = null;
@@ -316,9 +319,13 @@ export async function buildDita(draft: DocumentDraft): Promise<Buffer> {
 export function validateDitaXml(xml: string): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   const text = xml ?? '';
+  const trimmed = text.trim();
 
-  if (!text.trim().startsWith('<?xml')) {
+  if (!/^<\?xml/i.test(trimmed)) {
     errors.push(ui.backend.missingXmlDeclaration);
+  } else if (!/^<\?xml\s+version\s*=\s*(["'])[^"']*\1/.test(trimmed)) {
+    // e.g. `<?xml Version="1.0"?>` — not a valid declaration.
+    errors.push(formatUi(ui.backend.invalidXmlDeclaration, { text: trimmed.slice(0, 40) }));
   }
 
   // Find all tags (opening, closing, self-closing, processing instructions,
@@ -374,6 +381,75 @@ export function validateDitaXml(xml: string): { valid: boolean; errors: string[]
 }
 
 /**
+ * Normalise element-name casing to lowercase.
+ *
+ * Every DITA element name is lowercase, but AI-edited (and hand-edited) DITA
+ * often capitalises tags — e.g. `<Section>` closed by `</section>` or a
+ * `<Table>` block. Such documents are not well-formed XML and they break
+ * case-sensitive tag matching in the validator and in the section splitter, so
+ * the whole document is normalised before any further processing.
+ * Comments, CDATA, DOCTYPE and processing instructions are left untouched.
+ */
+export function normalizeDitaTagCase(xml: string): string {
+  const text = xml ?? '';
+  if (!text.includes('<')) return text;
+
+  const tagRegex = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[\s\S]*?>|<\?[\s\S]*?\?>|<\/?([a-zA-Z][\w.-]*)((?:\s+[^<>]*?)?)(\/?)>/g;
+  let out = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagRegex.exec(text)) !== null) {
+    out += text.slice(lastIndex, match.index);
+    const full = match[0];
+    const name = match[1];
+    const lowered = (name ?? '').toLowerCase();
+    if (name && lowered !== name) {
+      const nameStart = full.indexOf(name, 1);
+      out += `${full.slice(0, nameStart)}${lowered}${full.slice(nameStart + name.length)}`;
+    } else {
+      out += full;
+    }
+    lastIndex = tagRegex.lastIndex;
+  }
+  out += text.slice(lastIndex);
+  return out;
+}
+
+/**
+ * Normalise the leading XML declaration.
+ *
+ * XML requires the declaration to be exactly `<?xml version="1.0" ...?>`, but
+ * AI-edited DITA frequently writes `<?xml Version="1.0" encoding="UTF-8"?>`,
+ * which no XML parser accepts (the file is not well-formed even though the
+ * element names are fine).
+ */
+export function normalizeXmlDeclaration(xml: string): string {
+  const text = xml ?? '';
+  // Only the `<?xml ... ?>` declaration itself — `<?xml-stylesheet ...?>` and
+  // other processing instructions are left alone.
+  const match = /^(\s*)<\?xml(\s[\s\S]*?)?\?>/.exec(text);
+  if (!match) return text;
+  const inner = (match[2] ?? '')
+    .replace(/\s*=\s*/g, '=')
+    .replace(/\bversion\b/gi, 'version')
+    .replace(/\bencoding\b/gi, 'encoding')
+    .replace(/\bstandalone\b/gi, 'standalone')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const declaration = inner ? `<?xml ${inner}?>` : '<?xml version="1.0"?>';
+  return `${match[1]}${declaration}${text.slice(match[0].length)}`;
+}
+
+/**
+ * Normalise everything the AI/hand edits tend to get wrong before validating,
+ * splitting or exporting: the XML declaration and element-name casing.
+ */
+export function normalizeDitaMarkup(xml: string): string {
+  return normalizeXmlDeclaration(normalizeDitaTagCase(xml));
+}
+
+/**
  * Best-effort repair of common XML well-formedness issues (M8 follow-up).
  *
  * Fixes:
@@ -400,7 +476,7 @@ export function repairDitaXml(xml: string): string {
     if (full.startsWith('<!--') || full.startsWith('<![CDATA[') || full.startsWith('<!DOCTYPE') || full.startsWith('<?')) {
       out += full;
     } else if (full.startsWith('</')) {
-      const tagName = match[1];
+      const tagName = (match[1] ?? '').toLowerCase();
       const idx = stack.lastIndexOf(tagName);
       if (idx >= 0) {
         // Implicitly close any tags opened after `tagName` first, then let
@@ -411,10 +487,12 @@ export function repairDitaXml(xml: string): string {
         }
         stack.length = idx;
       }
-      out += full;
+      out += `</${tagName}>`;
     } else if (match[3] !== '/') {
-      stack.push(match[1]);
-      out += full;
+      const tagName = (match[1] ?? '').toLowerCase();
+      stack.push(tagName);
+      const nameStart = full.indexOf(match[1], 1);
+      out += `${full.slice(0, nameStart)}${tagName}${full.slice(nameStart + match[1].length)}`;
     } else {
       out += full;
     }
@@ -455,16 +533,20 @@ export interface DitaValidationResult {
  * Returns the (possibly repaired) content plus the final validation state.
  */
 export function validateAndRepairDitaXml(xml: string): DitaValidationResult {
-  const first = validateDitaXml(xml);
+  // Declaration + element-name case are normalised first: `<Section>` closed by
+  // `</section>` or `<?xml Version="1.0"?>` are neither well-formed XML nor
+  // valid DITA, and the splitter relies on case-insensitive element names.
+  const normalized = normalizeDitaMarkup(xml);
+  const first = validateDitaXml(normalized);
   if (first.valid) {
-    return { content: xml, valid: true, repaired: false, errors: [] };
+    return { content: normalized, valid: true, repaired: normalized !== (xml ?? ''), errors: [] };
   }
-  const repairedXml = repairDitaXml(xml);
+  const repairedXml = repairDitaXml(normalized);
   const second = validateDitaXml(repairedXml);
   return {
     content: repairedXml,
     valid: second.valid,
-    repaired: repairedXml !== xml,
+    repaired: repairedXml !== (xml ?? ''),
     errors: second.errors,
   };
 }

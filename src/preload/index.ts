@@ -63,6 +63,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.FILE_SAVE_DITA, { filePath, fileName, format }),
     exportAll: (projectId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_ALL, { projectId }),
+    exportBundle: (payload: import('../shared/types/ipc.types').ExportBundlePayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_BUNDLE, payload),
+    splitPreview: (payload: import('../shared/types/ipc.types').SplitPreviewPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_SPLIT_PREVIEW, payload),
+    splitExport: (payload: import('../shared/types/ipc.types').SplitExportPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_SPLIT_EXPORT, payload),
   },
   rag: {
     query: (query: string) =>
@@ -130,6 +136,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_RUNS_DELETE, { runId }),
     loadRun: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_RUNS_LOAD, { runId }),
+    splitPreview: (payload: import('../shared/types/ipc.types').LocalizeSplitPreviewPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_SPLIT_PREVIEW, payload),
+    splitExport: (payload: import('../shared/types/ipc.types').LocalizeSplitExportPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LOCALIZE_SPLIT_EXPORT, payload),
     onProgress: (callback: (event: import('../shared/types/ipc.types').LocalizeProgressEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types/ipc.types').LocalizeProgressEvent) =>
         callback(data);
@@ -154,9 +164,75 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.MAPPING_DELETE, payload),
     importParse: () =>
       ipcRenderer.invoke(IPC_CHANNELS.MAPPING_IMPORT_PARSE),
+    importPlan: (payload: import('../shared/types/ipc.types').MappingImportPlanPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.MAPPING_IMPORT_PLAN, payload),
     import: (payload: import('../shared/types/ipc.types').MappingImportPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.MAPPING_IMPORT, payload),
+    export: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.MAPPING_EXPORT),
     stats: () =>
       ipcRenderer.invoke(IPC_CHANNELS.MAPPING_STATS),
+    backups: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.MAPPING_BACKUPS),
+    restore: (payload: import('../shared/types/ipc.types').MappingRestorePayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.MAPPING_RESTORE, payload),
+    batches: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.MAPPING_BATCHES),
+    batchUndo: (payload: import('../shared/types/ipc.types').MappingBatchUndoPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.MAPPING_BATCH_UNDO, payload),
+  },
+  glossary: {
+    getSettings: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_GET_SETTINGS),
+    setSettings: (payload: Partial<import('../shared/types/glossary.types').GlossarySettings>) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_SET_SETTINGS, payload),
+    indexStatus: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_INDEX_STATUS),
+    testMatch: (payload: import('../shared/types/glossary.types').GlossaryTestMatchPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_TEST_MATCH, payload),
+    entries: (ids: string[]) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_ENTRIES, { ids }),
+    usageReport: (payload: import('../shared/types/glossary.types').GlossaryUsageReportPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_USAGE_REPORT, payload),
+    // ── Semantic model management (P2b) ──
+    modelDownload: (payload?: { sourceIndex?: number }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_DOWNLOAD, payload),
+    modelCancel: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_CANCEL),
+    modelInstallPackage: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_INSTALL_PACKAGE),
+    modelInstallFolder: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_INSTALL_FOLDER),
+    modelConfirmCustom: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_CONFIRM_CUSTOM),
+    modelExportPackage: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_EXPORT_PACKAGE),
+    modelVerify: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_VERIFY),
+    modelRetry: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_RETRY),
+    modelRemove: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_REMOVE),
+    modelClearNativeFailure: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_MODEL_CLEAR_NATIVE),
+    embeddingStart: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_EMBEDDING_START),
+    embeddingPause: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.GLOSSARY_EMBEDDING_PAUSE),
+    onModelProgress: (cb: (progress: import('../shared/types/glossary.types').GlossaryModelProgress) => void) => {
+      const listener = (_event: unknown, progress: import('../shared/types/glossary.types').GlossaryModelProgress) => cb(progress);
+      ipcRenderer.on(IPC_CHANNELS.GLOSSARY_MODEL_PROGRESS, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.GLOSSARY_MODEL_PROGRESS, listener);
+    },
+    onEmbeddingProgress: (cb: (progress: import('../shared/types/glossary.types').GlossaryEmbeddingProgress) => void) => {
+      const listener = (_event: unknown, progress: import('../shared/types/glossary.types').GlossaryEmbeddingProgress) => cb(progress);
+      ipcRenderer.on(IPC_CHANNELS.GLOSSARY_EMBEDDING_PROGRESS, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.GLOSSARY_EMBEDDING_PROGRESS, listener);
+    },
+    onStatusChanged: (cb: (status: import('../shared/types/glossary.types').GlossaryModelStatus) => void) => {
+      const listener = (_event: unknown, status: import('../shared/types/glossary.types').GlossaryModelStatus) => cb(status);
+      ipcRenderer.on(IPC_CHANNELS.GLOSSARY_INDEX_STATUS, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.GLOSSARY_INDEX_STATUS, listener);
+    },
   },
 });

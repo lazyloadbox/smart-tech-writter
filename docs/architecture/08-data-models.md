@@ -210,7 +210,20 @@ stateDiagram-v2
 | `LocalizeHumanLocalizeSubmitPayload` / `LocalizeHumanConfirmSubmitPayload` | editedDrafts, acceptedCommentIds |
 | `LocalizeGoBackPayload` | stage |
 | `MappingListPayload` | search? |
-| `MappingAddPayload` / `MappingUpdatePayload` | en, zhCN, zhTW（update 含 id） |
+| `MappingAddPayload` / `MappingUpdatePayload` | en, zhCN, zhTW, doNotUse?（update 含 id） |
+| `MappingRestorePayload` | fileName（仅备份目录内的文件名） |
+| `MappingBatchUndoPayload` | batchId |
 | `MappingImportPayload` | rows: MappingImportRow[] |
 | `PromptsGetResult` | catalog, overrides |
 | `PromptsSetPayload` | overrides |
+
+## 8.6 术语库 P4 新增类型
+
+| 类型 | 位置 | 说明 |
+|---|---|---|
+| `GlossaryBackupInfo` | `mapping.types.ts` | 备份文件（文件名/路径/时间/行数/大小） |
+| `GlossaryRestoreResult` | `mapping.types.ts` | 恢复结果（`restored` 行数 + 恢复前自动备份路径） |
+| `GlossaryImportBatchInfo` / `GlossaryBatchUndoResult` | `mapping.types.ts` | 导入批次审计与撤销结果 |
+| `GlossaryUsageReport` / `GlossaryUsageRow` | `glossary.types.ts` | 术语使用报告（`used` / `variant` / `missing` / `forbidden`） |
+| `GlossaryUsageReportPayload` | `glossary.types.ts` | `{ text, hits? }` |
+| `AIToolDefinition` / `AIToolCall` / `AIToolCallResult` | `ai-providers/base.provider.ts` | 可选函数调用（P4-8） |

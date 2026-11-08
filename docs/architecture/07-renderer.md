@@ -158,3 +158,15 @@ sequenceDiagram
 ## 7.7 追踪日志约定
 
 跨层统一 `console.info` 前缀：`[WF][UI]`（用户操作）、`[WF][Renderer]`（渲染层）、`[WF][IPC]`（IPC 层）、`[WF][Engine]`（引擎）、`[WF][Progress]`（事件），用于端到端排障。
+## 7.8 术语库相关界面（P3 / P4）
+
+| 组件 | 作用 |
+|---|---|
+| `MappingPanel.tsx` | 三列表格 + 「⛔ Do not use」列（P4-6）+ 服务端分页 + 使用范围开关 + P4 高级开关（分析注入 / 禁用检查 / 向量快照 / 写作工具） |
+| `MappingImportModal.tsx` | 列识别/导入模式/冲突策略/计划明细；新增列以 `forbidden` 展示 |
+| `GlossaryModelCard.tsx` | 语义模型状态、后端、向量进度 |
+| `GlossaryHitsPanel.tsx` | `review_analyze` 人工确认命中条目 |
+| `GlossaryUsageReportModal.tsx`（P4-4） | 导出后的术语使用报告（used / variant / missing / 禁用写法） |
+| `MappingPanel` 维护区（P4-1/P4-2） | 备份列表恢复 + 导入批次撤销 |
+
+「按章节拆分导出」入口在 `OutputPanel`（✂️），与术语使用报告（📊）并列。

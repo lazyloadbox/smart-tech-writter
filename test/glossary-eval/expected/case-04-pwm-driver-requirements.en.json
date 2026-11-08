@@ -1,0 +1,20 @@
+{
+  "caseId": "case-04-pwm-driver-requirements.en",
+  "sourceLang": "en",
+  "notes": "英文需求条目：包含连字符变体、复数变体、大小写变体和一条推荐句子（phrase 条目）。",
+  "expected": [
+    { "en": "Channel", "kind": "exact", "evidence": "per channel（R3）" },
+    { "en": "Dead time", "kind": "exact", "evidence": "Dead Time（大小写不同）" },
+    { "en": "Reset", "kind": "exact", "evidence": "after a reset" },
+    { "en": "Firmware update", "kind": "exact", "evidence": "during a firmware update" },
+    { "en": "Acceptance criteria", "kind": "exact", "evidence": "Acceptance criteria:" },
+    { "en": "Shoot-through", "kind": "exact", "evidence": "no shoot-through" },
+    { "en": "Resolution", "kind": "exact", "evidence": "resolution ≥ 10 bits" },
+    { "en": "Idle level", "kind": "exact", "evidence": "idle level low" },
+    { "en": "Register", "kind": "exact", "evidence": "register values" },
+    { "en": "Do not disconnect the power supply during a firmware update.", "kind": "exact", "evidence": "Do not disconnect the power supply during a firmware update." },
+    { "en": "Duty cycle", "kind": "variant", "evidence": "duty-cycle" },
+    { "en": "Frequency", "kind": "variant", "evidence": "frequencies" },
+    { "en": "Restore defaults", "kind": "concept", "evidence": "recover the default register values" }
+  ]
+}

@@ -1,0 +1,2 @@
+# ESM config file; eslint-plugin-import's resolver does not handle `.mts`.
+vitest.config.mts

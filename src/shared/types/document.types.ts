@@ -52,12 +52,29 @@ export interface ExtractedItem {
   importance: 'critical' | 'high' | 'normal';
 }
 
+/**
+ * A technical concept the parser spotted in the source material (L5a).
+ * `englishGuess` is what makes the English side retrievable when the source
+ * uses colloquial wording (design §2.5.7).
+ */
+export interface GlossaryTermCandidate {
+  /** Concept as it appears in the source text. */
+  surface: string;
+  lang?: 'en' | 'zh' | 'mixed';
+  /** Model's guess at the English term, used to query the glossary. */
+  englishGuess?: string;
+  /** Short surrounding context for adjudication. */
+  context?: string;
+}
+
 export interface FileExtractionResult {
   fileId: string;
   fileName: string;
   overview: string;
   items: ExtractedItem[];
   terminology: string[];
+  /** Structured concepts for glossary matching (L5a, optional). */
+  terms?: GlossaryTermCandidate[];
   conflicts: string[];
   unresolved: string[];
   /** Complete Markdown artifact used for review and downstream transfer. */
@@ -120,6 +137,15 @@ export interface ReviewComment {
   suggestedText?: string;
   explanation: string;
   accepted?: boolean;
+  /**
+   * Source of the comment (P3, design §2.8.4).
+   * - `ai` (default): produced by the AI reviewer.
+   * - `glossary`: produced by the deterministic glossary rule layer.
+   * Old persisted comments have no value and are treated as `ai`.
+   */
+  origin?: 'ai' | 'glossary';
+  /** Glossary entry id when `origin === 'glossary'` (useful for de-duplication). */
+  glossaryEntryId?: string;
 }
 
 export interface OutputDocument {
@@ -130,6 +156,8 @@ export interface OutputDocument {
   format: 'dita' | 'docx' | 'pdf';
   size: number;
   createdAt: string;
+  /** Id of the source `DocumentDraft` in `ditaDocuments` (P3/S2 split export). */
+  documentId?: string;
 }
 
 /**

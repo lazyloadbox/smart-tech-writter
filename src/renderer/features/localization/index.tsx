@@ -4,9 +4,11 @@ import { ReviewPanel } from '../doc-generator/components/ReviewPanel';
 import { XmlHighlight } from '../doc-generator/components/xml/XmlHighlight';
 import { StepNavigation, type StepNavItem } from '../../components/StepNavigation';
 import { LocalizePreviewModal } from './components/LocalizePreviewModal';
+import { SplitExportModal } from '../doc-generator/components/SplitExportModal';
 import { useMappingStore } from '../../stores/mapping.store';
 import type { LocalizeLanguage } from '../../../shared/types/document.types';
 import type { LocalizationStage, LocalizationFileResult } from '../../../shared/types/localization.types';
+import type { SplitPreviewResult } from '../../../shared/types/ipc.types';
 import { en as ui, formatUi, languageLabel, pluralUnit } from '../../../shared/i18n';
 
 const LANG_OPTIONS: { value: LocalizeLanguage; label: string }[] = [
@@ -58,6 +60,16 @@ export const LocalizationTab: React.FC = () => {
   const running = status === 'running';
   const [showOriginal, setShowOriginal] = useState(false);
   const [previewResult, setPreviewResult] = useState<LocalizationFileResult | null>(null);
+  const [splitState, setSplitState] = useState<{ exportFileName: string; preview: SplitPreviewResult } | null>(null);
+
+  const handleSplitPreview = async (exportFileName: string) => {
+    const preview = await window.electronAPI.localization.splitPreview({ exportFileName });
+    if (!preview) {
+      window.alert(ui.docGenerator.splitNoSections);
+      return;
+    }
+    setSplitState({ exportFileName, preview });
+  };
 
   // Streaming viewer shows the file currently being processed.
   const activeFile = currentFile ?? files[files.length - 1] ?? '';
@@ -455,6 +467,14 @@ export const LocalizationTab: React.FC = () => {
                         👁 {ui.localization.viewPreview}
                       </button>
                     )}
+                    {r.status === 'done' && (
+                      <button
+                        onClick={() => void handleSplitPreview(r.exportFileName)}
+                        className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded transition-colors shrink-0"
+                      >
+                        ✂️ {ui.localization.splitExport}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -473,6 +493,18 @@ export const LocalizationTab: React.FC = () => {
               </div>
             </section>
           </div>
+          {splitState && (
+            <SplitExportModal
+              preview={splitState.preview}
+              onClose={() => setSplitState(null)}
+              onExport={(options) =>
+                window.electronAPI.localization.splitExport({
+                  exportFileName: splitState.exportFileName,
+                  options,
+                })
+              }
+            />
+          )}
         </div>
       );
     }

@@ -22,11 +22,12 @@ export const workflowApi = {
     filePaths: string[],
     documentOutline?: import('../../shared/types/document.types').DocumentOutline,
     parseInstruction?: string,
-    fileInstructions?: Record<string, string>
+    fileInstructions?: Record<string, string>,
+    useGlossary?: boolean
   ): Promise<DocGenState> => {
     const projectId = uuidv4();
-    wfLog('API', 'Sending workflow:start', { projectId, fileCount: filePaths.length, filePaths });
-    const state = await getElectronApi().workflow.start({ projectId, filePaths, documentOutline, parseInstruction, fileInstructions });
+    wfLog('API', 'Sending workflow:start', { projectId, fileCount: filePaths.length, filePaths, useGlossary });
+    const state = await getElectronApi().workflow.start({ projectId, filePaths, documentOutline, parseInstruction, fileInstructions, useGlossary });
     wfLog('API', 'Received workflow:start response', {
       projectId: state.projectId,
       stage: state.currentStage,

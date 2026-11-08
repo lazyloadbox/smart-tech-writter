@@ -145,6 +145,11 @@ export const ReviewCommentsView: React.FC<ReviewCommentsViewProps> = ({ comments
                 <span className={`text-xs font-medium ${typeColor(c.type)}`}>
                   {typeLabel(c.type)}
                 </span>
+                {(c.origin === 'glossary' || c.section === 'Glossary') && (
+                  <span className="px-1 py-0.5 rounded bg-green-900/50 text-green-300 border border-green-800/50 text-[9px]">
+                    📚 {ui.review.glossaryBadge}
+                  </span>
+                )}
                 {c.section && (
                   <span className="text-xs text-gray-500 truncate">{formatUi(ui.review.section, { section: c.section ?? '' })}</span>
                 )}

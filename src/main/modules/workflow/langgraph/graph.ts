@@ -17,6 +17,7 @@ import {
 import type { PipelineConfig } from '../pipeline';
 import type { WorkflowEmitter } from './emitter';
 import type { PromptOverrides } from '../../prompts';
+import type { GlossaryService } from '../../glossary/glossary.service';
 import { WorkflowStateAnnotation, type WorkflowGraphState } from './graph-state';
 import { getCheckpointer } from './checkpointer';
 
@@ -31,6 +32,8 @@ export interface NodeRuntime {
   emitter: WorkflowEmitter;
   /** 用户配置的提示词覆盖（每次 invoke 从 settings 表加载）。 */
   promptOverrides?: PromptOverrides;
+  /** 术语库匹配服务（P3）。 */
+  glossary?: GlossaryService;
 }
 
 /** Bridge graph state (no workflowLogs/error/pipelineRunId) to DocGenState. */
@@ -77,6 +80,7 @@ function makeExecutionNode(
       onProgress: (s, m, d) => rt.emitter.emitProgress(s, m, d),
       onStream: (s, c) => rt.emitter.emitStream(s, c),
       promptOverrides: rt.promptOverrides,
+      glossary: rt.glossary,
     });
     return {
       ...updates,

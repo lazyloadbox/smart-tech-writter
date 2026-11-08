@@ -1,6 +1,6 @@
 import log from 'electron-log';
 import { en as ui } from '../../../shared/i18n';
-import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
+import type { AIProvider, AIStreamChunk, AIMessage, AIToolDefinition } from '../ai-providers/base.provider';
 import type { DocGenState } from '../../../shared/types/workflow.types';
 import type { DocumentOutline } from '../../../shared/types/document.types';
 import { buildSystemPrompt, type PromptDefinition, type PromptOverride, type PromptOverrides } from '../prompts';
@@ -22,6 +22,18 @@ export interface AgentConfig {
   systemPromptTemplate?: string;
   /** 文档大纲（仅 WriterAgent 使用）：自定义章节结构，不再固定模板。 */
   documentOutline?: DocumentOutline;
+  /** 系统注入的术语提示词块（Writer / Reviewer，P3）。 */
+  glossaryBlock?: string;
+  /**
+   * P4-8: writer-side glossary lookup tool. When provided (and the provider
+   * supports function calling) the writer can query terminology that was not
+   * pre-injected into the prompt.
+   */
+  glossaryLookup?: (query: string, limit?: number) => { en: string; zhCN: string; zhTW: string }[];
+  /** 规则层（确定性）产出的术语问题，接入 Reviewer 后合并（P3）。 */
+  ruleComments?: import('../../../shared/types/document.types').ReviewComment[];
+  /** 文档字符数超过该阈值时按章节分块评审（P3，0/未设置=不分块）。 */
+  chunkThresholdChars?: number;
   /**
    * 全局解析提示词（上传 & 解析阶段）：指导文件解析 Agent 的解析思路、重点与分析设计。
    * 单文件可通过 UploadedFile.parseInstruction 覆盖。
@@ -112,6 +124,70 @@ export abstract class BaseAgent {
     }
 
     return this.provider.complete(messages, { model: opts.model, signal, maxTokens, responseFormat: opts.responseFormat });
+  }
+
+  /**
+   * Call the LLM with tool (function calling) support (P4-8).
+   *
+   * Runs at most `maxRounds` tool rounds; each requested call is executed by
+   * `execute` and its JSON result is fed back to the model. Falls back to the
+   * plain `callLLM` path when the provider does not implement tool calling, so
+   * every existing endpoint keeps working.
+   */
+  protected async callLLMWithTools(
+    userPrompt: string,
+    tools: AIToolDefinition[],
+    execute: (name: string, args: Record<string, unknown>) => Promise<string> | string,
+    opts: CallLLMOptions & { maxRounds?: number } = {}
+  ): Promise<string> {
+    if (typeof this.provider.completeWithTools !== 'function') {
+      return this.callLLM(userPrompt, opts);
+    }
+    const signal = opts.signal ?? this.config.signal;
+    const maxTokens = opts.maxTokens ?? this.config.maxTokens;
+    const maxRounds = opts.maxRounds ?? 3;
+    const messages: AIMessage[] = [
+      { role: 'system', content: this.systemPrompt },
+      { role: 'user', content: userPrompt },
+    ];
+
+    for (let round = 0; round <= maxRounds; round++) {
+      const withTools = round < maxRounds && typeof this.provider.completeWithTools === 'function';
+      const result = await this.provider.completeWithTools!(messages, {
+        model: opts.model,
+        signal,
+        maxTokens,
+        ...(withTools ? { tools, toolChoice: 'auto' as const } : {}),
+      });
+      if (!withTools || result.toolCalls.length === 0) return result.content;
+
+      messages.push({
+        role: 'assistant',
+        content: result.content,
+        tool_calls: result.toolCalls.map((call) => ({
+          id: call.id,
+          type: 'function' as const,
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      });
+      for (const call of result.toolCalls) {
+        let args: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(call.arguments || '{}');
+          if (parsed && typeof parsed === 'object') args = parsed as Record<string, unknown>;
+        } catch {
+          // Malformed arguments: hand the model an explicit error result.
+        }
+        let output: string;
+        try {
+          output = await execute(call.name, args);
+        } catch (err) {
+          output = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        }
+        messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: output });
+      }
+    }
+    return '';
   }
 
   /** Call an LLM with a fixed application-owned JSON contract and validate it. */

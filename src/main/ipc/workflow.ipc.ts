@@ -22,7 +22,8 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
         payload.filePaths ?? [],
         payload.documentOutline,
         payload.parseInstruction,
-        payload.fileInstructions
+        payload.fileInstructions,
+        payload.useGlossary
       );
       log.info('[WF][IPC] workflow:start completed', {
         projectId: state.projectId,
@@ -175,6 +176,7 @@ export function registerWorkflowHandlers(engine: WorkflowEngine): void {
       ...(payload.editedReferenceSearchResults ? { referenceSearchResults: payload.editedReferenceSearchResults } : {}),
       ...(payload.editedLocalizedDrafts ? { localizedDrafts: payload.editedLocalizedDrafts } : {}),
       ...(payload.editedDitaDocuments ? { ditaDocuments: payload.editedDitaDocuments } : {}),
+      ...(payload.editedGlossaryHits ? { glossaryHits: payload.editedGlossaryHits } : {}),
     };
     engine.resumeFromHumanInput(payload.projectId, resumeData);
     log.info('[WF][IPC] workflow:reviewContinue applied', { projectId: payload.projectId });

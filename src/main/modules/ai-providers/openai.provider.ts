@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import log from 'electron-log';
 import { randomUUID } from 'node:crypto';
-import type { AIProvider, AIMessage, AIStreamChunk, CompletionOptions, ProviderConfig, ReasoningEffort } from './base.provider';
+import type { AIProvider, AIMessage, AIStreamChunk, AIToolCall, AIToolCallResult, CompletionOptions, ProviderConfig, ReasoningEffort } from './base.provider';
 
 /**
  * Default output token cap applied when a caller doesn't specify maxTokens.
@@ -87,7 +87,7 @@ export class OpenAIProvider implements AIProvider {
     const response = await this.client.chat.completions.create(
       {
         model,
-        messages,
+        messages: messages as never,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
         ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
@@ -110,6 +110,42 @@ export class OpenAIProvider implements AIProvider {
     return content;
   }
 
+  /**
+   * Tool-enabled completion (P4-8). Returns the assistant message plus any
+   * tool calls so the caller can execute them and continue the conversation.
+   */
+  async completeWithTools(
+    messages: AIMessage[],
+    options?: CompletionOptions
+  ): Promise<AIToolCallResult> {
+    throwIfAborted(options?.signal);
+    const model = options?.model ?? this.defaultModel;
+    const response = await this.client.chat.completions.create(
+      {
+        model,
+        messages: messages as never,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        ...(options?.tools && options.tools.length > 0
+          ? { tools: options.tools as never, tool_choice: options.toolChoice ?? 'auto' }
+          : {}),
+        ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
+        ...reasoningEffortParams(model, options?.reasoningEffort ?? this.reasoningEffort),
+      },
+      { signal: options?.signal }
+    );
+    const message = response.choices[0]?.message;
+    const toolCalls: AIToolCall[] = (message?.tool_calls ?? []).map((call) => {
+      const fn = (call as { function?: { name?: string; arguments?: string } }).function;
+      return {
+        id: call.id,
+        name: fn?.name ?? '',
+        arguments: fn?.arguments ?? '',
+      };
+    });
+    return { content: message?.content ?? '', toolCalls };
+  }
+
   async *stream(messages: AIMessage[], options?: CompletionOptions): AsyncIterable<string> {
     for await (const chunk of this.streamDetailed(messages, options)) {
       if (chunk.type === 'content') yield chunk.text;
@@ -127,7 +163,7 @@ export class OpenAIProvider implements AIProvider {
     const stream = await this.client.chat.completions.create(
       {
         model,
-        messages,
+        messages: messages as never,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
         stream: true,

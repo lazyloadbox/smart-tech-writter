@@ -105,15 +105,27 @@ export class ReviewerAgent extends BaseAgent {
       state.drafts;
     if (draftsToReview.length === 0) return {};
 
-    const draftsContext = draftsToReview.map((d) => `## ${d.title} [ID: ${d.id}]\n\n${d.content}`).join('\n\n---\n\n');
     const humanEditsNote = this.mode === 'post_edit_review'
       ? (state.humanEditedDrafts?.[0]?.content ?? state.humanEdits)
         ? `\n\nHuman editor notes:\n${state.humanEditedDrafts?.[0]?.content ?? state.humanEdits}`
         : ''
       : '';
 
-    const parsed = await this.callStructuredLLM(buildReviewUserPrompt(draftsContext, humanEditsNote), reviewCommentsContract);
-    const comments = normalizeComments(parsed, draftsToReview) ?? [];
+    const threshold = this.config.chunkThresholdChars ?? 0;
+    const totalChars = draftsToReview.reduce((sum, d) => sum + d.content.length, 0);
+    let aiComments: ReviewComment[];
+    if (threshold > 0 && totalChars > threshold) {
+      aiComments = await this.executeChunked(draftsToReview, humanEditsNote, threshold);
+    } else {
+      const draftsContext = draftsToReview.map((d) => `## ${d.title} [ID: ${d.id}]\n\n${d.content}`).join('\n\n---\n\n');
+      const parsed = await this.callStructuredLLM(
+        buildReviewUserPrompt(draftsContext, humanEditsNote, this.config.glossaryBlock),
+        reviewCommentsContract
+      );
+      aiComments = normalizeComments(parsed, draftsToReview) ?? [];
+    }
+
+    const comments = mergeRuleComments(aiComments, this.config.ruleComments ?? []);
 
     switch (this.mode) {
       case 'post_edit_review': return { postEditReviewComments: comments };
@@ -122,4 +134,96 @@ export class ReviewerAgent extends BaseAgent {
       default: return { aiReviewComments: comments };
     }
   }
+
+  /**
+   * Review large documents section by section (design §2.8.2a).
+   * Each chunk carries the same glossary block; only the rule violations that
+   * occur inside the chunk are injected, so the AI focuses on locating and
+   * fixing rather than re-discovering. Comments are de-duplicated afterwards.
+   */
+  private async executeChunked(
+    drafts: DocumentDraft[],
+    humanEditsNote: string,
+    threshold: number
+  ): Promise<ReviewComment[]> {
+    const merged: ReviewComment[] = [];
+    for (const draft of drafts) {
+      const chunks = splitChunks(draft.content, threshold);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const relevantRules = (this.config.ruleComments ?? []).filter((c) => {
+          // R1 warnings cannot be located to an exact snippet — include them in
+          // the first chunk only so they are reported exactly once.
+          if (!c.originalText) return i === 0;
+          return chunk.includes(c.originalText);
+        });
+        const ruleNote = relevantRules.length > 0
+          ? `\n\nRule-layer findings that must be located and fixed in this section:\n${relevantRules
+              .map((c) => `- ${c.originalText ? `\\"${c.originalText}\\" → ` : ''}${c.suggestedText ?? ''} (${c.explanation})`)
+              .join('\n')}`
+          : '';
+        const context = `## ${draft.title} (section ${i + 1}/${chunks.length}) [ID: ${draft.id}]\n\n${chunk}${ruleNote}`;
+        const parsed = await this.callStructuredLLM(
+          buildReviewUserPrompt(context, humanEditsNote, this.config.glossaryBlock),
+          reviewCommentsContract
+        );
+        const comments = normalizeComments(parsed, drafts) ?? [];
+        merged.push(...comments);
+      }
+    }
+    return dedupeComments(merged);
+  }
+}
+
+/** Split a draft at heading boundaries into chunks of at most `maxChars`. */
+function splitChunks(content: string, maxChars: number): string[] {
+  if (content.length <= maxChars) return [content];
+  const lines = content.split('\n');
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const line of lines) {
+    const isHeading = /^#{1,3}\s+/.test(line);
+    if (isHeading && current.length > 0 && size >= maxChars * 0.6) {
+      chunks.push(current.join('\n'));
+      current = [];
+      size = 0;
+    }
+    current.push(line);
+    size += line.length + 1;
+  }
+  if (current.length > 0) chunks.push(current.join('\n'));
+  return chunks.length > 0 ? chunks : [content];
+}
+
+/** De-duplicate AI comments by (originalText, suggestedText). */
+function dedupeComments(comments: ReviewComment[]): ReviewComment[] {
+  const seen = new Set<string>();
+  const out: ReviewComment[] = [];
+  for (const comment of comments) {
+    const key = `${comment.originalText ?? ''}|${comment.suggestedText ?? ''}|${comment.explanation}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(comment);
+  }
+  return out;
+}
+
+/**
+ * Merge deterministic rule comments with AI comments (design §2.8.4).
+ * A rule comment is dropped when the AI already produced a Glossary comment
+ * whose suggested text contains the rule's expected wording (the AI fix is
+ * more specific), avoiding duplicate cards in the review panel.
+ */
+export function mergeRuleComments(
+  aiComments: ReviewComment[],
+  ruleComments: ReviewComment[]
+): ReviewComment[] {
+  if (ruleComments.length === 0) return aiComments;
+  const aiGlossaryFixes = aiComments.filter((c) => c.section === 'Glossary' && c.suggestedText);
+  const remaining = ruleComments.filter((rule) => {
+    if (!rule.suggestedText) return true;
+    return !aiGlossaryFixes.some((ai) => ai.suggestedText && ai.suggestedText.includes(rule.suggestedText as string));
+  });
+  return [...aiComments, ...remaining];
 }

@@ -189,6 +189,10 @@ npm start
 | `npm start` | 启动 Electron Forge 开发模式（Vite 热更新 + 自动打开 DevTools） |
 | `npm run lint` | ESLint 全量检查（`.ts` / `.tsx`） |
 | `npx tsc --noEmit` | TypeScript 类型检查 |
+| `npm run test:unit` | Vitest 单元测试（`test/unit/**`） |
+| `npm run eval:glossary` | 术语匹配评测集（`test/glossary-eval/`，输出基线并写 `baseline.json`） |
+| `npm run gen:glossary-sample` | 重新生成术语导入样例（`test/mock-case-02/`） |
+| `npm run spike:embedding` | 本地 embedding 技术验证（模型需先下载，见 `test/spike-embedding/README.md`） |
 | `npx vite build --config vite.renderer.config.ts` | 单独构建渲染进程（快速验证 UI 编译） |
 | `npm run version:bump` | 本地升级版本号（`patch` / `minor` / `major` / 指定版本） |
 

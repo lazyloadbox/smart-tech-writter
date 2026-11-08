@@ -35,7 +35,7 @@ export class AnalyzerAgent extends BaseAgent {
             .join('\n')
         : '';
 
-    const prompt = buildAnalyzerUserPrompt(filesContextStr, refContext);
+    const prompt = buildAnalyzerUserPrompt(filesContextStr, refContext, this.config.glossaryBlock);
     const analysisBundle = await this.callStructuredLLM(prompt, analysisResultsContract);
     const analysisResults = analysisBundle.results;
     const knownFiles = new Map(state.inputFiles.filter((f) => f.parseStatus === 'done').map((f) => [f.id, f]));

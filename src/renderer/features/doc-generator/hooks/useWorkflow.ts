@@ -85,11 +85,12 @@ export function useWorkflow() {
       filePaths: string[],
       documentOutline?: import('../../../../shared/types/document.types').DocumentOutline,
       parseInstruction?: string,
-      fileInstructions?: Record<string, string>
+      fileInstructions?: Record<string, string>,
+      useGlossary?: boolean
     ) => {
-      console.info('[WF][Renderer][Hook] startWorkflow called', { fileCount: filePaths.length });
+      console.info('[WF][Renderer][Hook] startWorkflow called', { fileCount: filePaths.length, useGlossary });
       store.clearStreamChunks();
-      const initialState = await workflowApi.start(filePaths, documentOutline, parseInstruction, fileInstructions);
+      const initialState = await workflowApi.start(filePaths, documentOutline, parseInstruction, fileInstructions, useGlossary);
       store.setState({ ...initialState, workflowLogs: [] });
       store.clearStreamChunks();
       console.info('[WF][Renderer][Hook] Initial workflow state applied', {

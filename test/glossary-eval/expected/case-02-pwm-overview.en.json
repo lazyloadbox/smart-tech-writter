@@ -1,0 +1,26 @@
+{
+  "caseId": "case-02-pwm-overview.en.dita",
+  "sourceLang": "en",
+  "notes": "英文 DITA：翻译场景的典型输入，大部分条目应能被 L1/L2 字面命中。",
+  "expected": [
+    { "en": "Pulse Width Modulation", "kind": "exact", "evidence": "pulse width modulation" },
+    { "en": "Duty cycle", "kind": "exact", "evidence": "configurable duty cycle" },
+    { "en": "Frequency", "kind": "exact", "evidence": "frequency" },
+    { "en": "Resolution", "kind": "exact", "evidence": "resolution" },
+    { "en": "Channel", "kind": "exact", "evidence": "Each channel / per channel" },
+    { "en": "Dead time", "kind": "exact", "evidence": "the dead time" },
+    { "en": "H-bridge", "kind": "exact", "evidence": "H-bridge driver" },
+    { "en": "Clock source", "kind": "exact", "evidence": "Clock source: APB clock" },
+    { "en": "APB clock", "kind": "exact", "evidence": "APB clock at 80 MHz" },
+    { "en": "Output pin", "kind": "exact", "evidence": "maps to one output pin" },
+    { "en": "Idle level", "kind": "exact", "evidence": "Idle level is configurable" },
+    { "en": "LEDC", "kind": "exact", "evidence": "The ESP32 LEDC peripheral" },
+    { "en": "Shoot-through", "kind": "exact", "evidence": "to prevent shoot-through" },
+    { "en": "Low-speed mode", "kind": "exact", "evidence": "in low-speed mode" },
+    { "en": "Period", "kind": "exact", "evidence": "next period boundary" },
+    { "en": "Duty cycle register", "kind": "variant", "evidence": "duty-cycle register" },
+    { "en": "Double buffering", "kind": "variant", "evidence": "double-buffered" },
+    { "en": "Duty resolution", "kind": "concept", "evidence": "resolution" },
+    { "en": "PWM frequency", "kind": "concept", "evidence": "frequency" }
+  ]
+}

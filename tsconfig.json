@@ -20,6 +20,6 @@
       "@preload/*": ["src/preload/*"]
     }
   },
-  "include": ["src/**/*", "forge.env.d.ts"]
+  "include": ["src/**/*", "test/**/*.ts", "vitest.config.mts", "forge.env.d.ts"]
 }
 

@@ -1,0 +1,149 @@
+{
+  "generatedAt": "2026-11-08",
+  "config": {
+    "glossary": "test\\glossary-eval\\glossary.json",
+    "cases": "test\\glossary-eval\\cases",
+    "expected": "test\\glossary-eval\\expected",
+    "limit": 500,
+    "fill": 3889
+  },
+  "glossary": {
+    "curated": 111,
+    "synthetic": 3889,
+    "total": 4000
+  },
+  "summary": {
+    "expected": 66,
+    "injected": 16,
+    "literal": 62,
+    "literalInjected": 16,
+    "conceptOnly": 4,
+    "baselineRecall": 0.24242424242424243,
+    "baselineUsableRecall": 0.24242424242424243,
+    "selectiveCeiling": 0.9393939393939394
+  },
+  "tokenCost": {
+    "injectedBlockTokens": 6890,
+    "hitBlockTokens": 317,
+    "wasteRatio": 0.9539912917271408
+  },
+  "cases": [
+    {
+      "caseId": "case-01-esp32-notes.zh",
+      "sourceLang": "zh-CN",
+      "expectedTotal": 23,
+      "injected": 7,
+      "literal": 22,
+      "literalInjected": 7,
+      "conceptOnly": 1,
+      "baselineRecall": 0.30434782608695654,
+      "baselineUsableRecall": 0.30434782608695654,
+      "selectiveCeiling": 0.9565217391304348,
+      "missingFromInjection": [
+        "Duty cycle",
+        "Pulse Width Modulation",
+        "Resolution",
+        "Frequency",
+        "H-bridge",
+        "Reset",
+        "Firmware update",
+        "Square wave",
+        "Register",
+        "Peripheral",
+        "Period",
+        "Shoot-through",
+        "Glitch",
+        "Do not disconnect the power supply during a firmware update.",
+        "Wake-up",
+        "Duty cycle register"
+      ],
+      "notLiteral": [
+        "Duty cycle register"
+      ]
+    },
+    {
+      "caseId": "case-02-pwm-overview.en",
+      "sourceLang": "en",
+      "expectedTotal": 19,
+      "injected": 4,
+      "literal": 17,
+      "literalInjected": 4,
+      "conceptOnly": 2,
+      "baselineRecall": 0.21052631578947367,
+      "baselineUsableRecall": 0.21052631578947367,
+      "selectiveCeiling": 0.8947368421052632,
+      "missingFromInjection": [
+        "Pulse Width Modulation",
+        "Duty cycle",
+        "Frequency",
+        "Resolution",
+        "H-bridge",
+        "Output pin",
+        "Idle level",
+        "LEDC",
+        "Shoot-through",
+        "Low-speed mode",
+        "Period",
+        "Duty cycle register",
+        "Double buffering",
+        "Duty resolution",
+        "PWM frequency"
+      ],
+      "notLiteral": [
+        "Duty resolution",
+        "PWM frequency"
+      ]
+    },
+    {
+      "caseId": "case-03-glossary-feedback.mixed",
+      "sourceLang": "mixed",
+      "expectedTotal": 11,
+      "injected": 2,
+      "literal": 11,
+      "literalInjected": 2,
+      "conceptOnly": 0,
+      "baselineRecall": 0.18181818181818182,
+      "baselineUsableRecall": 0.18181818181818182,
+      "selectiveCeiling": 1,
+      "missingFromInjection": [
+        "Duty cycle",
+        "PWM frequency",
+        "Resolution",
+        "Table",
+        "Reset",
+        "Troubleshooting",
+        "Firmware update",
+        "Watchdog timer",
+        "Pulse Width Modulation"
+      ],
+      "notLiteral": []
+    },
+    {
+      "caseId": "case-04-pwm-driver-requirements.en",
+      "sourceLang": "en",
+      "expectedTotal": 13,
+      "injected": 3,
+      "literal": 12,
+      "literalInjected": 3,
+      "conceptOnly": 1,
+      "baselineRecall": 0.23076923076923078,
+      "baselineUsableRecall": 0.23076923076923078,
+      "selectiveCeiling": 0.9230769230769231,
+      "missingFromInjection": [
+        "Reset",
+        "Firmware update",
+        "Shoot-through",
+        "Resolution",
+        "Idle level",
+        "Register",
+        "Do not disconnect the power supply during a firmware update.",
+        "Duty cycle",
+        "Frequency",
+        "Restore defaults"
+      ],
+      "notLiteral": [
+        "Restore defaults"
+      ]
+    }
+  ]
+}

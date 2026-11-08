@@ -1,0 +1,217 @@
+{
+  "generatedBy": "test/mock-case-02/generate-sample.mjs",
+  "generatedAt": "2026-11-08",
+  "purpose": "P0-1 realistic glossary import fixture: banner + styled header, in-file duplicates, conflict, blank row, invalid row, missing zh-CN, trailing punctuation, zero-width and NBSP characters, rich-text cells; plus a legacy 3-column sheet and a header-less sheet.",
+  "files": {
+    "glossary-sample.xlsx": {
+      "sheets": {
+        "Terms": {
+          "layout": "row1 = merged banner, row2 = header No./en-US/zh-CN, row3+ = data",
+          "headerRow": 2,
+          "dataRowCount": 17,
+          "nonEmptyDataRows": 16,
+          "blankRows": [
+            8
+          ],
+          "expected": {
+            "new": 10,
+            "dupInFile": 4,
+            "conflictInFile": 1,
+            "invalid": 1
+          },
+          "rows": [
+            {
+              "row": 3,
+              "no": 1,
+              "en": "Duty cycle",
+              "enKey": "duty cycle",
+              "zhCN": "占空比",
+              "kind": "new",
+              "resolution": "insert"
+            },
+            {
+              "row": 4,
+              "no": 2,
+              "en": "PWM (Pulse Width Modulation)",
+              "enKey": "pwm (pulse width modulation)",
+              "zhCN": "脉宽调制",
+              "kind": "new",
+              "resolution": "insert"
+            },
+            {
+              "row": 5,
+              "no": 3,
+              "en": "Duty cycle",
+              "enKey": "duty cycle",
+              "zhCN": "占空比",
+              "kind": "dupInFile",
+              "resolution": "merged"
+            },
+            {
+              "row": 6,
+              "no": 4,
+              "en": "Duty   Cycle",
+              "enKey": "duty cycle",
+              "zhCN": "占空比",
+              "kind": "dupInFile",
+              "resolution": "merged"
+            },
+            {
+              "row": 7,
+              "no": 5,
+              "en": "Duty cycle",
+              "enKey": "duty cycle",
+              "zhCN": "占空比寄存器",
+              "kind": "conflictInFile",
+              "resolution": "strategy"
+            },
+            {
+              "row": 8,
+              "kind": "blank",
+              "enKey": "",
+              "resolution": "skipped"
+            },
+            {
+              "row": 9,
+              "no": 6,
+              "en": "Dead time",
+              "enKey": "dead time",
+              "zhCN": "死区时间",
+              "kind": "new",
+              "resolution": "insert"
+            },
+            {
+              "row": 10,
+              "no": 7,
+              "en": "Dead   time",
+              "enKey": "dead time",
+              "zhCN": "死区时间",
+              "kind": "dupInFile",
+              "resolution": "merged"
+            },
+            {
+              "row": 11,
+              "no": 8,
+              "en": "dead-time",
+              "enKey": "dead-time",
+              "zhCN": "死区时间",
+              "kind": "new",
+              "resolution": "insert",
+              "note": "hyphen variant: a distinct en_key at import time; merged later by the L2 alias layer"
+            },
+            {
+              "row": 12,
+              "no": 9,
+              "en": "Reset",
+              "enKey": "reset",
+              "zhCN": "复位",
+              "kind": "new",
+              "resolution": "insert"
+            },
+            {
+              "row": 13,
+              "no": 10,
+              "en": "Restore",
+              "enKey": "restore",
+              "zhCN": "恢复",
+              "kind": "new",
+              "resolution": "insert"
+            },
+            {
+              "row": 14,
+              "no": 11,
+              "en": "Firmware update",
+              "enKey": "firmware update",
+              "zhCN": "固件升级",
+              "kind": "new",
+              "resolution": "insert",
+              "note": "rich-text cell (exceljs richText)"
+            },
+            {
+              "row": 15,
+              "no": 12,
+              "en": "",
+              "enKey": "",
+              "zhCN": "仅中文条目",
+              "kind": "invalid",
+              "resolution": "skipped"
+            },
+            {
+              "row": 16,
+              "no": 13,
+              "en": "ESP32 PWM controller",
+              "enKey": "esp32 pwm controller",
+              "zhCN": "",
+              "kind": "new",
+              "resolution": "insert",
+              "note": "missing zh-CN: valid term-only entry under the new schema"
+            },
+            {
+              "row": 17,
+              "no": 14,
+              "en": "ZeroWidth timer",
+              "enKey": "zerowidth timer",
+              "zhCN": "零宽字符定时器",
+              "kind": "new",
+              "resolution": "insert",
+              "note": "zero-width space in en must be stripped before matching"
+            },
+            {
+              "row": 18,
+              "no": 15,
+              "en": "LEDC",
+              "enKey": "ledc",
+              "zhCN": "外设 时钟",
+              "kind": "new",
+              "resolution": "insert",
+              "note": "NBSP in zh-CN must be normalized away"
+            },
+            {
+              "row": 19,
+              "no": 16,
+              "en": "Duty cycle.",
+              "enKey": "duty cycle",
+              "zhCN": "占空比",
+              "kind": "dupInFile",
+              "resolution": "merged",
+              "note": "trailing punctuation stripped from en → same en_key as row 1"
+            }
+          ]
+        },
+        "Legacy3Col": {
+          "layout": "row1 = header English/简体中文/繁體中文, row2+ = data",
+          "headerRow": 1,
+          "dataRowCount": 5,
+          "note": "row 5 has an empty zh-TW cell: the old importer drops it, the new schema must keep the term"
+        },
+        "NoHeader": {
+          "layout": "no header row; column 1 is a numeric No.",
+          "dataRowCount": 3,
+          "note": "positional fallback must detect seq/en/zhCN because column 1 is mostly integers"
+        }
+      }
+    },
+    "glossary-sample.csv": {
+      "layout": "header No.,en-US,zh-CN; BOM; CRLF; one quoted field containing a comma",
+      "dataRowCount": 4
+    },
+    "glossary-legacy.csv": {
+      "layout": "header English,简体中文,繁體中文; CRLF",
+      "dataRowCount": 2
+    }
+  },
+  "expectations": {
+    "enKeyExample": {
+      "Duty cycle": "duty cycle",
+      "Duty cycle.": "duty cycle",
+      "Duty   Cycle": "duty cycle"
+    },
+    "notes": [
+      "Rows 3, 4 and 16 must collapse into row 1 (same en_key, same zh-CN).",
+      "Row 5 conflicts with row 1 (same en_key, different zh-CN) and must be reported as conflictInFile.",
+      "Row 8 (dead-time) is a distinct en_key at import time; hyphen/space aliasing happens in the L2 layer.",
+      "Row 12 has no English cell → invalid row, reported with its 1-based source row number.",
+      "Row 13 has no zh-CN cell → still importable under the new schema (zh-CN may be empty)."
+    ]
+  }
+}

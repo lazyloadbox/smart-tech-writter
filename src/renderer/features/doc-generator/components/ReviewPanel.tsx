@@ -67,6 +67,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 }) => {
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
   const [activeDoc, setActiveDoc] = useState(0);
+  const [onlyGlossary, setOnlyGlossary] = useState(false);
   // Track manual edits separately from auto-applied changes.
   // Only updated when the user types in the textarea — NEVER on accept/reject.
   const [manualEdits, setManualEdits] = useState<Record<number, string>>({});
@@ -77,6 +78,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // This mirrors ReviewCommentsView's behavior and fixes Stage 7c showing
   // raw JSON text instead of visual review cards.
   const normalizedComments = useMemo(() => normalizeComments(comments), [comments]);
+  const displayComments = useMemo(
+    () =>
+      onlyGlossary
+        ? normalizedComments.filter((comment) => comment.origin === 'glossary' || comment.section === 'Glossary')
+        : normalizedComments,
+    [normalizedComments, onlyGlossary]
+  );
+  const isGlossaryComment = (comment: ReviewComment) =>
+    comment.origin === 'glossary' || comment.section === 'Glossary';
+  const glossaryCommentCount = normalizedComments.filter(isGlossaryComment).length;
 
   // Helper: normalize line endings to LF for robust matching
   const toLF = (s: string) => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -304,6 +315,20 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               </button>
             )}
           </div>
+          {leftPanel !== 'original' && glossaryCommentCount > 0 && (
+            <div className="px-3 py-1.5 bg-gray-900/50 border-b border-gray-700">
+              <button
+                onClick={() => setOnlyGlossary((prev) => !prev)}
+                className={`px-2 py-0.5 rounded-full text-[11px] border transition-colors ${
+                  onlyGlossary
+                    ? 'bg-green-900/60 text-green-300 border-green-700'
+                    : 'bg-gray-800 text-gray-400 border-gray-600 hover:text-gray-200'
+                }`}
+              >
+                📚 {formatUi(ui.review.onlyGlossaryCount, { count: glossaryCommentCount })}
+              </button>
+            </div>
+          )}
           {/* Doc tabs for multi-doc */}
           {drafts.length > 1 && (
             <div className="flex border-b border-gray-700 px-2 bg-gray-800">
@@ -333,10 +358,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
-              {normalizedComments.length === 0 && (
+              {displayComments.length === 0 && (
                 <p className="text-xs text-gray-500 p-4 text-center">{ui.review.noSuggestions}</p>
               )}
-              {normalizedComments.map((c) => {
+              {displayComments.map((c) => {
                 const status = getCommentStatus(c);
                 const matchFailed = status === 'accepted' && failedAcceptIds.includes(c.id);
                 return (
@@ -354,6 +379,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                         <span className={`text-xs font-medium ${typeColor(c.type)}`}>
                           {typeLabel(c.type)}
                         </span>
+                        {isGlossaryComment(c) && (
+                          <span className="ml-1 px-1 py-0.5 rounded bg-green-900/50 text-green-300 border border-green-800/50 text-[9px]">
+                            📚 {ui.review.glossaryBadge}
+                          </span>
+                        )}
                         {c.section && <span className="text-gray-500 ml-1">· {c.section}</span>}
                       </div>
                     </div>

@@ -11,7 +11,8 @@ interface InputPanelProps {
     filePaths: string[],
     outline?: DocumentOutline,
     parseInstruction?: string,
-    fileInstructions?: Record<string, string>
+    fileInstructions?: Record<string, string>,
+    useGlossary?: boolean
   ) => void;
   isStarting: boolean;
 }
@@ -34,6 +35,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   const [mergeIntoSingle, setMergeIntoSingle] = useState(true);
   const [showParsePrompt, setShowParsePrompt] = useState(false);
   const [parseInstruction, setParseInstruction] = useState('');
+  const [useGlossary, setUseGlossary] = useState(true);
 
   const buildOutline = (): DocumentOutline => ({
     sections: outlineText
@@ -190,6 +192,14 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         >
           + {ui.docGenerator.addMoreFiles}
         </button>
+        <label className="flex items-center gap-1.5 text-xs text-gray-300 select-none">
+          <input
+            type="checkbox"
+            checked={useGlossary}
+            onChange={(event) => setUseGlossary(event.target.checked)}
+          />
+          📚 {ui.docGenerator.useGlossary}
+        </label>
         <button
           disabled={readyFiles.length === 0 || isStarting}
           onClick={() => {
@@ -201,7 +211,8 @@ export const InputPanel: React.FC<InputPanelProps> = ({
               files.filter((f) => f.parseStatus !== 'error').map((f) => f.path),
               buildOutline(),
               parseInstruction.trim() || undefined,
-              Object.keys(fileInstructions).length > 0 ? fileInstructions : undefined
+              Object.keys(fileInstructions).length > 0 ? fileInstructions : undefined,
+              useGlossary
             );
           }}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm rounded text-white font-medium transition-colors"

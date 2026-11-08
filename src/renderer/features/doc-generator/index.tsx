@@ -10,6 +10,8 @@ import { LogViewer } from './components/LogViewer';
 import { AIStreamViewer } from './components/AIStreamViewer';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { CollapsibleSection } from './components/CollapsibleSection';
+import { GlossaryHitsPanel } from './components/GlossaryHitsPanel';
+import { GlossaryAppliedNotice } from './components/GlossaryAppliedNotice';
 import { XmlHighlight } from './components/xml/XmlHighlight';
 import { AiArtifactChat } from './components/AiArtifactChat';
 import { AiDraftEditor } from './components/AiDraftEditor';
@@ -39,6 +41,7 @@ export const DocGeneratorTab: React.FC = () => {
   const [reviewAnalysisResults, setReviewAnalysisResults] = useState<typeof state.analysisResults | null>(null);
   const [reviewAnalysisSynthesis, setReviewAnalysisSynthesis] = useState<string | null>(null);
   const [reviewReferences, setReviewReferences] = useState<typeof state.referenceSearchResults | null>(null);
+  const [reviewGlossaryHits, setReviewGlossaryHits] = useState<typeof state.glossaryHits | null>(null);
   const [reviewDrafts, setReviewDrafts] = useState<typeof state.drafts | null>(null);
 
   useEffect(() => {
@@ -47,6 +50,7 @@ export const DocGeneratorTab: React.FC = () => {
       setReviewAnalysisResults(state.analysisResults);
       setReviewAnalysisSynthesis(state.analysisSynthesisMarkdown);
       setReviewReferences(state.referenceSearchResults);
+      setReviewGlossaryHits(state.glossaryHits ?? []);
     }
     if (state.status === 'PAUSED:REVIEW_DRAFT') setReviewDrafts(state.drafts);
   }, [
@@ -56,6 +60,7 @@ export const DocGeneratorTab: React.FC = () => {
     state.analysisResults,
     state.analysisSynthesisMarkdown,
     state.referenceSearchResults,
+    state.glossaryHits,
     state.drafts,
   ]);
 
@@ -94,12 +99,13 @@ export const DocGeneratorTab: React.FC = () => {
     filePaths: string[],
     outline?: DocumentOutline,
     parseInstruction?: string,
-    fileInstructions?: Record<string, string>
+    fileInstructions?: Record<string, string>,
+    useGlossary?: boolean
   ) => {
-    console.info('[WF][UI] Start button clicked', { fileCount: filePaths.length, filePaths });
+    console.info('[WF][UI] Start button clicked', { fileCount: filePaths.length, filePaths, useGlossary });
     setIsStarting(true);
     try {
-      await startWorkflow(filePaths, outline, parseInstruction, fileInstructions);
+      await startWorkflow(filePaths, outline, parseInstruction, fileInstructions, useGlossary);
       console.info('[WF][UI] Workflow start request completed');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -194,6 +200,17 @@ export const DocGeneratorTab: React.FC = () => {
                 <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
                 <span>{state.currentProgressMessage}</span>
               </div>
+            )}
+
+            {/* 📚 Make glossary usage visible while the draft / DITA is generated */}
+            {(currentStage === 'draft' ||
+              currentStage === 'ai_review' ||
+              currentStage === 'dita_build' ||
+              currentStage === 'dita_ai_review') && (
+              <GlossaryAppliedNotice
+                hits={state.glossaryHits ?? []}
+                enabled={state.useGlossary !== false}
+              />
             )}
 
             {/* File list during upload_parse stage */}
@@ -479,6 +496,7 @@ export const DocGeneratorTab: React.FC = () => {
       const editableAnalysis = reviewAnalysisResults ?? state.analysisResults;
       const editableSynthesis = reviewAnalysisSynthesis ?? state.analysisSynthesisMarkdown;
       const editableReferences = reviewReferences ?? state.referenceSearchResults;
+      const editableGlossaryHits = reviewGlossaryHits ?? state.glossaryHits ?? [];
       const analysisArtifact = `${buildMarkdownArtifactBundle([
         ...editableAnalysis.map((result) => ({
           id: result.fileId,
@@ -516,6 +534,9 @@ export const DocGeneratorTab: React.FC = () => {
               <div className="text-xs font-semibold text-indigo-300 mb-2">🧩 Cross-file synthesis</div>
               <MarkdownRenderer content={editableSynthesis || 'No cross-file synthesis was produced.'} />
             </div>
+            {(state.useGlossary !== false || editableGlossaryHits.length > 0) && (
+              <GlossaryHitsPanel hits={editableGlossaryHits} onChange={setReviewGlossaryHits} />
+            )}
             {editableAnalysis.map((r) => (
               <div key={r.fileId} className="p-4 bg-gray-800 rounded border border-gray-700">
                 <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
@@ -582,6 +603,7 @@ export const DocGeneratorTab: React.FC = () => {
               editedAnalysisResults: editableAnalysis,
               editedAnalysisSynthesisMarkdown: editableSynthesis,
               editedReferenceSearchResults: editableReferences,
+              editedGlossaryHits: editableGlossaryHits,
             })} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded font-medium transition-colors">
               ▶ {ui.workflow.review.generateDraft}
             </button>
@@ -599,6 +621,9 @@ export const DocGeneratorTab: React.FC = () => {
             <h2 className="text-sm font-semibold text-gray-200">✍️ {ui.workflow.review.draftTitle}</h2>
             <div className="flex-1" />
             <span className="text-xs text-gray-400">{formatUi(ui.workflow.review.draftCount, { count: state.drafts.length })}</span>
+          </div>
+          <div className="shrink-0 px-4 py-2 border-b border-gray-700 bg-gray-900/60">
+            <GlossaryAppliedNotice hits={state.glossaryHits ?? []} enabled={state.useGlossary !== false} />
           </div>
           <div className="flex-1 overflow-hidden">
             <AiDraftEditor
@@ -633,6 +658,9 @@ export const DocGeneratorTab: React.FC = () => {
               ↩ {ui.workflow.review.backToAiReview}
             </button>
           </div>
+          <div className="shrink-0 px-4 py-2 border-b border-gray-700 bg-gray-900/60">
+            <GlossaryAppliedNotice hits={state.glossaryHits ?? []} enabled={state.useGlossary !== false} />
+          </div>
           <div className="flex-1 min-h-0 overflow-hidden">
             <ReviewPanel
               drafts={state.drafts}
@@ -656,6 +684,9 @@ export const DocGeneratorTab: React.FC = () => {
             <h2 className="text-sm font-semibold text-gray-200">📦 {ui.workflow.review.ditaTitle}</h2>
             <div className="flex-1" />
             <span className="text-xs text-gray-400">{formatUi(ui.workflow.review.ditaCount, { count: state.ditaDocuments.length })}</span>
+          </div>
+          <div className="shrink-0 px-4 py-2 border-b border-gray-700 bg-gray-900/60">
+            <GlossaryAppliedNotice hits={state.glossaryHits ?? []} enabled={state.useGlossary !== false} />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
             <ReviewPanel
@@ -691,6 +722,9 @@ export const DocGeneratorTab: React.FC = () => {
             >
               ↩ {ui.workflow.review.backToDitaReview}
             </button>
+          </div>
+          <div className="shrink-0 px-4 py-2 border-b border-gray-700 bg-gray-900/60">
+            <GlossaryAppliedNotice hits={state.glossaryHits ?? []} enabled={state.useGlossary !== false} />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
             <ReviewPanel

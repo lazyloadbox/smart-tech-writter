@@ -106,3 +106,8 @@ test/langgraph/dist/
 # Scripts: keep bump-version.mjs tracked (needed by release workflow), ignore only temp files
 /scripts/tmp-lock.txt
 /scripts/tmp-procs.txt
+
+# embedding spike artifacts (model files are downloaded, never committed)
+/test/spike-embedding/models/
+/test/spike-embedding/results/
+/test/spike-embedding/electron-zip/

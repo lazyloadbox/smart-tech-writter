@@ -1,0 +1,18 @@
+{
+  "caseId": "case-03-glossary-feedback.mixed",
+  "sourceLang": "mixed",
+  "notes": "中英混写的邮件：术语以英文出现、概念以中文出现，用于检验双侧匹配与缩写别名。",
+  "expected": [
+    { "en": "Duty cycle", "kind": "exact", "evidence": "duty cycle / 占空比" },
+    { "en": "Dead time", "kind": "exact", "evidence": "dead time" },
+    { "en": "PWM frequency", "kind": "exact", "evidence": "PWM 频率" },
+    { "en": "Resolution", "kind": "exact", "evidence": "分辨率" },
+    { "en": "Table", "kind": "exact", "evidence": "一张表（table）" },
+    { "en": "Reset", "kind": "exact", "evidence": "reset" },
+    { "en": "Channel", "kind": "exact", "evidence": "channel" },
+    { "en": "Troubleshooting", "kind": "exact", "evidence": "troubleshooting" },
+    { "en": "Firmware update", "kind": "exact", "evidence": "firmware update / 固件升级" },
+    { "en": "Watchdog timer", "kind": "exact", "evidence": "watchdog timer" },
+    { "en": "Pulse Width Modulation", "kind": "variant", "evidence": "PWM" }
+  ]
+}

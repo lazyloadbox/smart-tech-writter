@@ -7,6 +7,7 @@ import type { DocGenState, StageName, WorkflowStatus, WorkflowLogEntry } from '.
 import type { DocumentOutline } from '../../../shared/types/document.types';
 import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
 import type { DocumentSearchService } from '../rag/local-search.service';
+import type { GlossaryService } from '../glossary/glossary.service';
 import { getDatabase } from '../storage/database';
 import { getStatusForStage, PAUSE_STAGES, STAGE_ORDER } from './state-machine';
 import { buildWorkflowGraph } from './langgraph/graph';
@@ -43,6 +44,8 @@ import type { AiArtifactFormat } from '../../../shared/types/ipc.types';
 export class WorkflowEngine {
   private provider: AIProvider;
   private ragService: DocumentSearchService;
+  /** Glossary matching service (P3) — injected after construction. */
+  private glossaryService?: GlossaryService;
   private graph: ReturnType<typeof buildWorkflowGraph>;
   /** Synchronous state cache backing getState() (kept fresh by emitter + hydrate). */
   private stateCache = new Map<string, DocGenState>();
@@ -65,12 +68,18 @@ export class WorkflowEngine {
     this.provider = provider;
   }
 
+  /** Attach the glossary matching service (called from `main/index.ts`). */
+  setGlossaryService(glossary: GlossaryService): void {
+    this.glossaryService = glossary;
+  }
+
   async startWorkflow(
     projectId: string,
     filePaths: string[],
     outline?: DocumentOutline,
     parseInstruction?: string,
-    fileInstructions?: Record<string, string>
+    fileInstructions?: Record<string, string>,
+    useGlossary?: boolean
   ): Promise<DocGenState> {
     log.info('[WF][Engine] startWorkflow requested', { projectId, fileCount: filePaths.length, filePaths });
     if (filePaths.length === 0) {
@@ -107,6 +116,8 @@ export class WorkflowEngine {
       targetLanguage: 'en',
       documentOutline: outline ?? DEFAULT_DOCUMENT_OUTLINE,
       parseInstruction,
+      useGlossary: useGlossary !== false,
+      glossaryHits: [],
       // Gen Doc no longer has a localization branch; the standalone localization feature handles DITA translation.
       skipLocalization: true,
       workflowLogs: [],
@@ -210,6 +221,7 @@ export class WorkflowEngine {
         ragService: this.ragService,
         emitter,
         promptOverrides: loadPromptOverrides(),
+        glossary: this.glossaryService,
       },
     };
     this.running.add(projectId);
@@ -313,7 +325,13 @@ export class WorkflowEngine {
   async aiEditDraft(projectId: string, currentContent: string, instruction: string): Promise<string> {
     log.info('[WF][Engine] aiEditDraft requested', { projectId, instructionLen: instruction.length, contentLen: currentContent.length });
     const systemPrompt = buildSystemPrompt(PROMPTS.aiEditDraft, loadPromptOverrides().aiEditDraft);
-    const userPrompt = buildAiEditDraftUserPrompt(instruction, currentContent);
+    const projectState = this.getState(projectId);
+    const hits = (projectState?.glossaryHits ?? []).filter((hit) => hit.userState !== 'removed');
+    const glossaryBlock =
+      this.glossaryService && projectState?.useGlossary !== false && hits.length > 0
+        ? this.glossaryService.buildPromptBlock('writing', hits).text
+        : '';
+    const userPrompt = buildAiEditDraftUserPrompt(instruction, currentContent, glossaryBlock);
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -434,6 +452,7 @@ export class WorkflowEngine {
         ragService: this.ragService,
         emitter,
         promptOverrides: loadPromptOverrides(),
+        glossary: this.glossaryService,
       },
       signal: ac.signal,
     };
@@ -542,6 +561,8 @@ export class WorkflowEngine {
       if (typeof state.ingestContext !== 'string') state.ingestContext = '';
       if (typeof state.analysisSynthesisMarkdown !== 'string') state.analysisSynthesisMarkdown = '';
       if (!state.documentOutline) state.documentOutline = DEFAULT_DOCUMENT_OUTLINE;
+      if (typeof state.useGlossary !== 'boolean') state.useGlossary = true;
+      if (!Array.isArray(state.glossaryHits)) state.glossaryHits = [];
       this.stateCache.set(projectId, state);
       return state;
     } catch {

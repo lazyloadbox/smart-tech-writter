@@ -10,6 +10,7 @@ import type {
   LocalizeLanguage,
   DocumentOutline,
 } from '../../../../shared/types/document.types';
+import type { GlossaryHit } from '../../../../shared/types/glossary.types';
 
 /**
  * LangGraph state schema for the document-generation workflow.
@@ -40,6 +41,12 @@ export const WorkflowStateAnnotation = Annotation.Root({
   documentOutline: Annotation<DocumentOutline>,
   parseInstruction: Annotation<string>,
   skipLocalization: Annotation<boolean>,
+  /** Project-level glossary switch (P3); missing means enabled. */
+  useGlossary: Annotation<boolean>,
+  /** Glossary index version the hits were resolved against (P3). */
+  glossaryVersion: Annotation<number>,
+  /** Tiered glossary hits resolved during `analyze` (P3). */
+  glossaryHits: Annotation<GlossaryHit[]>,
   currentStage: Annotation<StageName>,
   status: Annotation<WorkflowStatus>,
 });

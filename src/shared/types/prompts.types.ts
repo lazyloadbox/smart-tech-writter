@@ -56,7 +56,9 @@ export type PromptKey =
   | 'ditaLocalizer'
   | 'mapReduce.map'
   | 'mapReduce.reduce'
-  | 'aiEditDraft';
+  | 'aiEditDraft'
+  | 'termExtractor'
+  | 'glossaryAdjudicator';
 
 /** 提示词覆盖集合（按提示词键） */
 export type PromptOverrides = Partial<Record<PromptKey, PromptOverride>>;

@@ -1,6 +1,39 @@
 export interface AIMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Assistant tool calls (only present on `assistant` messages). */
+  tool_calls?: {
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }[];
+  /** Associates a `tool` message with the call that produced it. */
+  tool_call_id?: string;
+  name?: string;
+}
+
+/** OpenAI-compatible tool (function) definition. */
+export interface AIToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
+/** One tool call requested by the model. */
+export interface AIToolCall {
+  id: string;
+  name: string;
+  /** Raw JSON string of the arguments. */
+  arguments: string;
+}
+
+/** Result of one tool-enabled completion round. */
+export interface AIToolCallResult {
+  content: string;
+  toolCalls: AIToolCall[];
 }
 
 export interface CompletionOptions {
@@ -13,6 +46,9 @@ export interface CompletionOptions {
   responseFormat?: ResponseFormat;
   /** Optional reasoning budget. Unsupported models must receive no field. */
   reasoningEffort?: ReasoningEffort;
+  /** Tool (function calling) definitions (P4-8). */
+  tools?: AIToolDefinition[];
+  toolChoice?: 'auto' | 'none';
 }
 
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
@@ -42,6 +78,11 @@ export interface AIProvider {
   /** Stream with reasoning deltas distinguished from visible output. */
   streamDetailed(messages: AIMessage[], options?: CompletionOptions): AsyncIterable<AIStreamChunk>;
   embed(text: string): Promise<number[]>;
+  /**
+   * Optional tool-enabled completion (P4-8). Providers that do not implement it
+   * simply omit the method; callers fall back to the plain prompt path.
+   */
+  completeWithTools?(messages: AIMessage[], options?: CompletionOptions): Promise<AIToolCallResult>;
 }
 
 export interface ProviderConfig {

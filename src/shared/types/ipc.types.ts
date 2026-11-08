@@ -21,6 +21,9 @@ export const IPC_CHANNELS = {
   FILE_READ: 'file:read',
   FILE_SAVE_DITA: 'file:saveDita',
   FILE_EXPORT_ALL: 'file:exportAll',
+  FILE_EXPORT_BUNDLE: 'file:exportBundle',
+  FILE_SPLIT_PREVIEW: 'file:splitPreview',
+  FILE_SPLIT_EXPORT: 'file:splitExport',
   // RAG
   RAG_QUERY: 'rag:query',
   RAG_ADD_DOCUMENT: 'rag:addDocument',
@@ -61,14 +64,50 @@ export const IPC_CHANNELS = {
   LOCALIZE_RUNS_GET: 'localize:runsGet',
   LOCALIZE_RUNS_DELETE: 'localize:runsDelete',
   LOCALIZE_RUNS_LOAD: 'localize:runsLoad',
+  LOCALIZE_SPLIT_PREVIEW: 'localize:splitPreview',
+  LOCALIZE_SPLIT_EXPORT: 'localize:splitExport',
   // Translation mapping (glossary) management
   MAPPING_LIST: 'mapping:list',
   MAPPING_ADD: 'mapping:add',
   MAPPING_UPDATE: 'mapping:update',
   MAPPING_DELETE: 'mapping:delete',
   MAPPING_IMPORT_PARSE: 'mapping:importParse',
+  MAPPING_IMPORT_PLAN: 'mapping:importPlan',
   MAPPING_IMPORT: 'mapping:import',
+  MAPPING_EXPORT: 'mapping:export',
   MAPPING_STATS: 'mapping:stats',
+  /** Glossary backups (P4-1). */
+  MAPPING_BACKUPS: 'mapping:backups',
+  MAPPING_RESTORE: 'mapping:restore',
+  /** Import batch audit + undo (P4-2). */
+  MAPPING_BATCHES: 'mapping:batches',
+  MAPPING_BATCH_UNDO: 'mapping:batchUndo',
+  // Glossary matching engine (P2a)
+  GLOSSARY_GET_SETTINGS: 'glossary:getSettings',
+  GLOSSARY_SET_SETTINGS: 'glossary:setSettings',
+  GLOSSARY_INDEX_STATUS: 'glossary:indexStatus',
+  GLOSSARY_TEST_MATCH: 'glossary:testMatch',
+  GLOSSARY_ENTRIES: 'glossary:entries',
+  /** Pre-export terminology usage report (P4-4). */
+  GLOSSARY_USAGE_REPORT: 'glossary:usageReport',
+  // Semantic model management (P2b)
+  GLOSSARY_MODEL_DOWNLOAD: 'glossary:modelDownload',
+  GLOSSARY_MODEL_CANCEL: 'glossary:modelCancel',
+  GLOSSARY_MODEL_INSTALL_PACKAGE: 'glossary:modelInstallFromPackage',
+  GLOSSARY_MODEL_INSTALL_FOLDER: 'glossary:modelInstallFromFolder',
+  GLOSSARY_MODEL_CONFIRM_CUSTOM: 'glossary:modelConfirmCustom',
+  GLOSSARY_MODEL_EXPORT_PACKAGE: 'glossary:modelExportPackage',
+  GLOSSARY_MODEL_VERIFY: 'glossary:modelVerify',
+  GLOSSARY_MODEL_RETRY: 'glossary:modelRetry',
+  GLOSSARY_MODEL_REMOVE: 'glossary:modelRemove',
+  GLOSSARY_MODEL_CLEAR_NATIVE: 'glossary:modelClearNativeFailure',
+  /** Main → renderer broadcast. */
+  GLOSSARY_MODEL_PROGRESS: 'glossary:modelProgress',
+  // Background vector indexing (P2b)
+  GLOSSARY_EMBEDDING_START: 'glossary:embeddingStart',
+  GLOSSARY_EMBEDDING_PAUSE: 'glossary:embeddingPause',
+  /** Main → renderer broadcast. */
+  GLOSSARY_EMBEDDING_PROGRESS: 'glossary:embeddingProgress',
 } as const;
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS];
@@ -88,6 +127,8 @@ export interface WorkflowStartPayload {
    * 优先级高于全局解析提示词。
    */
   fileInstructions?: Record<string, string>;
+  /** 可选：本项目是否使用术语库（默认 true，P3）。 */
+  useGlossary?: boolean;
 }
 
 export interface WorkflowProgressEvent {
@@ -169,6 +210,8 @@ export interface ReviewContinuePayload {
   editedLocalizedDrafts?: import('./document.types').DocumentDraft[];
   /** Optional edited DITA documents from review_dita. */
   editedDitaDocuments?: import('./document.types').DocumentDraft[];
+  /** Optional human-confirmed glossary hits from review_analyze (P3). */
+  editedGlossaryHits?: import('./glossary.types').GlossaryHit[];
 }
 
 export interface AiEditDraftPayload {
@@ -193,6 +236,117 @@ export interface WorkflowAiEditArtifactPayload extends AiEditArtifactPayload {
   projectId: string;
   /** Human checkpoint that owns the artifact; used for stream/log attribution. */
   stage?: import('./workflow.types').StageName;
+}
+
+// ── Section split export (S2/S3, design §3.6) ───────────────────────────────
+
+/** One section row in the split preview modal. */
+export interface SplitSectionSummary {
+  index: number;
+  title: string;
+  fileName: string;
+  chars: number;
+}
+
+export interface SplitPreviewResult {
+  docTitle: string;
+  sections: SplitSectionSummary[];
+  warnings: string[];
+}
+
+export type SplitExportFormat = 'dita' | 'docx';
+export type IncludeIntroMode = 'none' | 'first' | 'all';
+
+export interface SplitExportOptions {
+  /** 1-based indices of the sections to export (as returned by the preview). */
+  selected: number[];
+  formats: SplitExportFormat[];
+  includeIntro: IncludeIntroMode;
+  createMap: boolean;
+  titleFromSection: boolean;
+  /** Also copy the complete (unsplit) document into the chosen folder. */
+  includeFull?: boolean;
+}
+
+export interface SplitExportFileResult {
+  fileName: string;
+  format: SplitExportFormat;
+  valid: boolean;
+  errors?: string[];
+}
+
+/** A complete (unsplit) file copied alongside the section files. */
+export interface SplitExportFullFile {
+  fileName: string;
+  format: string;
+}
+
+export interface SplitExportResult {
+  destDir: string;
+  files: SplitExportFileResult[];
+  /** Complete files copied when `includeFull` was requested. */
+  fullFiles?: SplitExportFullFile[];
+  warnings: string[];
+}
+
+/** `file:splitPreview` payload. */
+export interface SplitPreviewPayload {
+  projectId: string;
+  /** DITA document id (DocumentDraft.id) from the workflow state. */
+  documentId: string;
+}
+
+/** `file:splitExport` payload. */
+export interface SplitExportPayload extends SplitPreviewPayload {
+  options: SplitExportOptions;
+}
+
+/**
+ * `file:exportBundle` payload — exports the complete document **and** the
+ * per-section split files with a single folder dialog (single-document export
+ * flow in `OutputPanel`).
+ */
+export interface ExportBundlePayload {
+  projectId: string;
+  documentId: string;
+  /** Split options; defaults to every section as DITA when omitted. */
+  split?: SplitExportOptions;
+}
+
+export interface ExportBundleResult {
+  /** Directory the complete files were copied to. */
+  destDir: string;
+  fullFiles: SplitExportFullFile[];
+  /** Sub-directory receiving the section files (`null` when there are none). */
+  splitDir: string | null;
+  splitFiles: SplitExportFileResult[];
+  warnings: string[];
+}
+
+/**
+ * `file:downloadZip` result. The archive always contains the complete
+ * `.dita` / `.docx` files; when the document can be split it also contains one
+ * `<Title>_sections/` folder per document with the per-section `.dita` files
+ * and a `.ditamap` linking them.
+ */
+export interface DownloadZipResult {
+  filePath: string;
+  /** Number of file entries written into the archive. */
+  entries: number;
+  /** Number of per-section files added to the archive. */
+  sectionFiles: number;
+  /** Folder names that hold the per-section files. */
+  sectionFolders: string[];
+}
+
+/** `localize:splitPreview` / `localize:splitExport` payloads (S3-3). */
+export interface LocalizeSplitPreviewPayload {
+  /** `LocalizationFileResult.exportFileName` of the localized result. */
+  exportFileName: string;
+}
+
+export interface LocalizeSplitExportPayload extends LocalizeSplitPreviewPayload {
+  options: SplitExportOptions;
 }
 
 export interface SettingsGetPayload {
@@ -295,12 +449,21 @@ export interface LocalizeStatusResult {
 export interface MappingListPayload {
   /** Optional free-text search across English / 简体中文 / 繁體中文. */
   search?: string;
+  /** Server-side pagination offset. */
+  offset?: number;
+  /** Server-side page size. */
+  limit?: number;
+  /** Optional kind filter (`term` | `phrase`). */
+  kind?: import('./mapping.types').GlossaryEntryKind;
 }
 
 export interface MappingAddPayload {
   en: string;
   zhCN: string;
   zhTW: string;
+  kind?: import('./mapping.types').GlossaryEntryKind;
+  /** Forbidden / deprecated wordings (P4-6). */
+  doNotUse?: string[];
 }
 
 export interface MappingUpdatePayload {
@@ -308,18 +471,37 @@ export interface MappingUpdatePayload {
   en: string;
   zhCN: string;
   zhTW: string;
+  kind?: import('./mapping.types').GlossaryEntryKind;
+  /** Forbidden / deprecated wordings (P4-6). */
+  doNotUse?: string[];
 }
 
 export interface MappingDeletePayload {
   id: string;
 }
 
-/** Result of parsing an import file (before the user confirms the import). */
-export interface MappingImportParseResult {
+/** `mapping:restore` payload — a backup file name (not an arbitrary path). */
+export interface MappingRestorePayload {
   fileName: string;
-  rows: import('./mapping.types').MappingImportRow[];
 }
 
-export interface MappingImportPayload {
-  rows: import('./mapping.types').MappingImportRow[];
+/** `mapping:batchUndo` payload. */
+export interface MappingBatchUndoPayload {
+  batchId: string;
 }
+
+/** Shared options for the plan preview and the actual import. */
+export interface MappingImportOptionsPayload {
+  parseId: string;
+  mode: import('./mapping.types').GlossaryImportMode;
+  strategy: import('./mapping.types').ConflictStrategy;
+  /** Keep the built-in default glossary entries in `replace` mode. */
+  keepDefaults: boolean;
+  /** Manual column mapping chosen in the preview dialog. */
+  columnOverride?: import('./mapping.types').GlossaryColumnOverride;
+  /** Workbook sheet to re-parse (0-based). */
+  sheetIndex?: number;
+}
+
+export type MappingImportPlanPayload = MappingImportOptionsPayload;
+export type MappingImportPayload = MappingImportOptionsPayload;

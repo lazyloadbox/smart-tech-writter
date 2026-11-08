@@ -8,6 +8,7 @@ import { SemanticSearchService } from './modules/rag/semantic-search.service';
 import { WorkflowEngine } from './modules/workflow/index';
 import { LocalizationService } from './modules/localization/localization.service';
 import { MappingService } from './modules/localization/mapping.service';
+import { GlossaryService } from './modules/glossary/glossary.service';
 import { registerAllIpcHandlers } from './ipc/index';
 import { en as ui } from '../shared/i18n';
 
@@ -26,6 +27,7 @@ let mainWindow: BrowserWindow | null = null;
 let workflowEngine: WorkflowEngine | null = null;
 let mappingService: MappingService | null = null;
 let localizationService: LocalizationService | null = null;
+let glossaryService: GlossaryService | null = null;
 
 function createWindow(): void {
   // Forge Vite outputs preload bundle next to main bundle as "preload.js".
@@ -81,10 +83,27 @@ function initializeServices(): void {
 
   // Build standalone DITA localization service (shares the same provider)
   mappingService = new MappingService();
+  glossaryService = new GlossaryService();
+  // P4-7: persist the vector index snapshot under userData/cache.
+  glossaryService.setSnapshotDir(path.join(app.getPath('userData'), 'cache'));
+  workflowEngine.setGlossaryService(glossaryService);
+  mappingService.setGlossaryService(glossaryService);
   localizationService = new LocalizationService(provider, mappingService);
+  localizationService.setGlossaryService(glossaryService);
+
+  // Backfill aliases for rows created before P2a, then warm the index in the
+  // background so the first translation does not pay the build cost. The async
+  // warm-up also kicks off background vector indexing when the semantic model
+  // is installed (P2b), which never blocks the UI.
+  mappingService.backfillAliases();
+  setTimeout(() => {
+    void glossaryService
+      ?.warmUpAsync()
+      .catch((err) => log.warn('Glossary warm-up failed:', err));
+  }, 10_000);
 
   // Register all IPC handlers
-  registerAllIpcHandlers(workflowEngine, ragService, localizationService, mappingService);
+  registerAllIpcHandlers(workflowEngine, ragService, localizationService, mappingService, glossaryService);
 
   log.info(`${ui.common.productName} services initialized`);
 }
@@ -98,6 +117,7 @@ app.on('ready', () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    glossaryService?.dispose();
     closeDatabase();
     app.quit();
   }

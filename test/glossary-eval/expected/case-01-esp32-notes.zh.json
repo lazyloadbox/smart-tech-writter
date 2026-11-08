@@ -1,0 +1,30 @@
+{
+  "caseId": "case-01-esp32-notes.zh",
+  "sourceLang": "zh-CN",
+  "notes": "中文调试笔记：同一概念既有术语写法也有口语写法，用于检验 zh 侧精确匹配与概念级召回。",
+  "expected": [
+    { "en": "Duty cycle", "kind": "exact", "evidence": "占空比（多处）" },
+    { "en": "Pulse Width Modulation", "kind": "exact", "evidence": "脉宽调制" },
+    { "en": "Dead time", "kind": "exact", "evidence": "死区时间" },
+    { "en": "Resolution", "kind": "exact", "evidence": "分辨率" },
+    { "en": "Clock source", "kind": "exact", "evidence": "时钟源" },
+    { "en": "Frequency", "kind": "exact", "evidence": "频率" },
+    { "en": "H-bridge", "kind": "exact", "evidence": "H 桥" },
+    { "en": "Reset", "kind": "exact", "evidence": "复位" },
+    { "en": "Bootloader", "kind": "exact", "evidence": "引导程序" },
+    { "en": "Firmware update", "kind": "exact", "evidence": "固件升级" },
+    { "en": "Channel", "kind": "exact", "evidence": "通道" },
+    { "en": "Comparison register", "kind": "exact", "evidence": "比较寄存器" },
+    { "en": "Conversion table", "kind": "exact", "evidence": "换算表" },
+    { "en": "Square wave", "kind": "exact", "evidence": "方波" },
+    { "en": "Register", "kind": "exact", "evidence": "寄存器" },
+    { "en": "Peripheral", "kind": "exact", "evidence": "外设" },
+    { "en": "Period", "kind": "exact", "evidence": "每个周期结束" },
+    { "en": "Shoot-through", "kind": "exact", "evidence": "直通" },
+    { "en": "Glitch", "kind": "exact", "evidence": "毛刺" },
+    { "en": "APB clock", "kind": "exact", "evidence": "APB 时钟 80 MHz" },
+    { "en": "Do not disconnect the power supply during a firmware update.", "kind": "exact", "evidence": "固件升级过程中请勿断开电源。" },
+    { "en": "Wake-up", "kind": "variant", "evidence": "wakeup" },
+    { "en": "Duty cycle register", "kind": "concept", "evidence": "比较寄存器" }
+  ]
+}

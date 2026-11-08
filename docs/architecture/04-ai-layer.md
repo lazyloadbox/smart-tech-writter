@@ -152,3 +152,17 @@ AI 返回的 JSON 常带 markdown 围栏或杂散文本，系统做了**三层�
 | DitaLocalizerAgent / DitaReviewerAgent | 单文件 DITA XML 全文（maxTokens 128000） |
 
 > `summarizeLongText`（`modules/context/map-reduce.ts`）：chunk 4000/overlap 200，逐段完整提炼（map）再合并（reduce），不做均匀采样；用于解析阶段避免硬截断，支持注入用户解析提示词（`SummarizeOptions.instruction`）。分析阶段直接消费审核后的 Markdown 工件，不再二次摘要。
+## 4.7 术语库全链路（P3 / P4）
+
+`GlossaryService` 负责匹配（L1 精确 / L2 变体 / L3 模糊 / L4 本地向量 / L5 AI），`PromptService` 侧由系统注入术语块，用户不可在提示词设置中删除。
+
+| 阶段 | 注入内容 | 代码 |
+|---|---|---|
+| `analyze`（P4-3） | `buildAnalyzeContext(ingestContext)` 的紧凑 TSV 块，让分析摘要先用统一用词 | `pipeline.runAnalyzeStage` → `AnalyzerAgent(glossaryBlock)` |
+| `draft` | 人工确认后的 Tier A/B 术语块 | `runDraftStage` → `WriterAgent(glossaryBlock)` |
+| `draft`（P4-8） | 可选 `glossary_lookup` 工具调用（`writerToolLookup`，默认关闭） | `BaseAgent.callLLMWithTools` + `GlossaryService.lookupForTool` |
+| `ai_review` / `dita_ai_review` / `localize_ai_review` | 术语块 + 确定性规则评论 | `buildReviewGlossary` → `ReviewerAgent(glossaryBlock, ruleComments)` |
+
+规则层（`glossary/checker.ts`，零 token）：R1 源中文概念未落地、R2 写法变体（可一键替换）、R3 译文未按表、R4 句子未复用、R7 “Do not use” 禁用写法（P4-6）。
+
+预导出 **术语使用报告**（P4-4，`glossary/usage-report.ts`）：按条目分类 `used` / `variant` / `missing` 并统计禁用写法命中，导出阶段写日志，渲染层可通过 `glossary:usageReport` 查看。

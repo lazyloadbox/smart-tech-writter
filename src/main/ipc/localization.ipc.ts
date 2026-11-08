@@ -1,4 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
 import { IPC_CHANNELS } from '../../shared/types/ipc.types';
 import type {
   LocalizeStartPayload,
@@ -6,11 +8,62 @@ import type {
   LocalizeHumanLocalizeSubmitPayload,
   LocalizeHumanConfirmSubmitPayload,
   LocalizeGoBackPayload,
+  LocalizeSplitExportPayload,
+  LocalizeSplitPreviewPayload,
 } from '../../shared/types/ipc.types';
 import type { LocalizationService } from '../modules/localization/localization.service';
 import { allowFileReadMany } from '../modules/security/path-guard';
+import {
+  buildSplitDirectoryName,
+  buildSplitDitaMap,
+  buildSplitPlan,
+  composeSplitFiles,
+  ditaToMarkdown,
+  summarizeSplit,
+  toSectionDocxName,
+} from '../modules/document-builder';
+import { buildDocx } from '../modules/document-builder/docx.builder';
 import log from 'electron-log';
 import { en as ui } from '../../shared/i18n';
+
+/** Find a localized result by its export file name. */
+function findLocalizedResult(service: LocalizationService, exportFileName: string) {
+  return service.getResults().find((result) => result.exportFileName === exportFileName) ?? null;
+}
+
+/** Create `base` or `base (2)`, `base (3)` … avoiding overwrites. */
+function createUniqueDirectory(base: string): string {
+  let candidate = base;
+  let counter = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = `${base} (${counter})`;
+    counter++;
+  }
+  fs.mkdirSync(candidate, { recursive: true });
+  return candidate;
+}
+
+/** Write a file inside `destDir`, refusing path escapes. */
+function writeInside(destDir: string, fileName: string, content: Buffer | string): void {
+  const full = path.join(destDir, fileName);
+  if (path.dirname(full) !== destDir) {
+    throw new Error(`Refusing to write outside the export directory: ${fileName}`);
+  }
+  fs.writeFileSync(full, content, { flag: 'wx' });
+}
+
+/** `name.ext` → `name (2).ext` when the target already exists. */
+function uniqueFilePath(destDir: string, fileName: string): string {
+  const ext = path.extname(fileName);
+  const base = path.basename(fileName, ext);
+  let candidate = path.join(destDir, fileName);
+  let counter = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(destDir, `${base} (${counter})${ext}`);
+    counter++;
+  }
+  return candidate;
+}
 
 export function registerLocalizationHandlers(service: LocalizationService): void {
   ipcMain.handle(IPC_CHANNELS.LOCALIZE_SELECT_FILES, async (event) => {
@@ -154,4 +207,94 @@ export function registerLocalizationHandlers(service: LocalizationService): void
     log.info('[Localize][IPC] localize:export done', { destDir, count });
     return { destDir, count };
   });
+
+  // ── Section split export for localized results (S3-3) ──────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.LOCALIZE_SPLIT_PREVIEW,
+    async (_event, payload: LocalizeSplitPreviewPayload) => {
+      const result = findLocalizedResult(service, payload.exportFileName);
+      if (!result) return null;
+      const plan = buildSplitPlan(result.content, result.fileName);
+      return summarizeSplit(plan);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.LOCALIZE_SPLIT_EXPORT,
+    async (event, payload: LocalizeSplitExportPayload) => {
+      const result = findLocalizedResult(service, payload.exportFileName);
+      if (!result) return null;
+      const plan = buildSplitPlan(result.content, result.fileName);
+      const composed = composeSplitFiles(plan, payload.options);
+
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const dirResult = await dialog.showOpenDialog(win!, {
+        properties: ['openDirectory', 'createDirectory'],
+        title: ui.backend.chooseOutputDirectory,
+      });
+      if (dirResult.canceled || dirResult.filePaths.length === 0) return null;
+
+      const baseDir = dirResult.filePaths[0];
+      const fullFiles: { fileName: string; format: string }[] = [];
+      if (payload.options.includeFull) {
+        const target = uniqueFilePath(baseDir, result.exportFileName);
+        fs.writeFileSync(target, result.content, { flag: 'wx' });
+        fullFiles.push({
+          fileName: path.basename(target),
+          format: path.extname(target).replace(/^\./, '') || 'dita',
+        });
+      }
+      if (composed.length === 0) {
+        if (fullFiles.length === 0) return null;
+        return { destDir: baseDir, files: [], fullFiles, warnings: plan.warnings };
+      }
+
+      const baseTitle = result.fileName.replace(/\.[^.]+$/, '');
+      const destDir = createUniqueDirectory(
+        path.join(baseDir, buildSplitDirectoryName(baseTitle))
+      );
+      const formats = new Set(payload.options.formats ?? ['dita']);
+      const files: { fileName: string; format: 'dita' | 'docx'; valid: boolean; errors?: string[] }[] = [];
+      const ditaNames: string[] = [];
+      const now = new Date().toISOString();
+
+      for (const file of composed) {
+        if (formats.has('dita')) {
+          const fileName = `${file.baseName}.dita`;
+          writeInside(destDir, fileName, file.ditaContent);
+          ditaNames.push(fileName);
+          files.push({ fileName, format: 'dita', valid: file.valid, errors: file.errors });
+        }
+        if (formats.has('docx')) {
+          const fileName = toSectionDocxName(file.baseName);
+          const buffer = await buildDocx(
+            {
+              id: `${result.sourcePath}-${file.sectionIndex}`,
+              title: result.fileName,
+              content: ditaToMarkdown(file.ditaContent),
+              createdAt: now,
+              updatedAt: now,
+            },
+            { headerText: result.fileName }
+          );
+          writeInside(destDir, fileName, buffer);
+          files.push({ fileName, format: 'docx', valid: true });
+        }
+      }
+
+      if (payload.options.createMap && ditaNames.length > 0) {
+        const mapName = `${baseTitle}.ditamap`;
+        writeInside(destDir, mapName, buildSplitDitaMap(result.fileName, ditaNames));
+        files.push({ fileName: mapName, format: 'dita', valid: true });
+      }
+
+      log.info('[Localize][IPC] localize:splitExport done', {
+        destDir,
+        files: files.length,
+        full: fullFiles.length,
+      });
+      return { destDir, files, fullFiles, warnings: plan.warnings };
+    }
+  );
 }

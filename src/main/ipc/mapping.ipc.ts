@@ -1,148 +1,140 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
-import fs from 'node:fs';
-import path from 'node:path';
 import ExcelJS from 'exceljs';
 import log from 'electron-log';
+import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { IPC_CHANNELS } from '../../shared/types/ipc.types';
 import type {
-  MappingListPayload,
   MappingAddPayload,
-  MappingUpdatePayload,
+  MappingBatchUndoPayload,
   MappingDeletePayload,
-  MappingImportPayload,
+  MappingImportOptionsPayload,
+  MappingListPayload,
+  MappingRestorePayload,
+  MappingUpdatePayload,
 } from '../../shared/types/ipc.types';
-import type { MappingImportRow } from '../../shared/types/mapping.types';
+import type {
+  GlossaryColumnOverride,
+  GlossaryParseResult,
+  MappingImportParseResult,
+  MappingImportPlanResult,
+} from '../../shared/types/mapping.types';
+import { parseGlossaryFile } from '../modules/glossary/file-parser';
 import type { MappingService } from '../modules/localization/mapping.service';
-import { en as ui, formatUi } from '../../shared/i18n';
+import { en as ui } from '../../shared/i18n';
 
-/** Common header names for the first column — when matched, the first row is skipped. */
-const HEADER_RE =
-  /^(source|english|term|key|en|source_text|source text|原文|英文|术语|关键词|源文本|source\s*\(en\))$/i;
+/** Parsed import sessions are cached for 10 minutes (or until imported). */
+const PARSE_TTL_MS = 10 * 60 * 1000;
 
-/** Convert an exceljs cell value to a plain string. */
-function cellToString(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value.trim();
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'object') {
-    const obj = value as { text?: unknown; richText?: { text: string }[]; hyperlink?: unknown; result?: unknown };
-    if (typeof obj.text === 'string') return obj.text.trim();
-    if (Array.isArray(obj.richText)) return obj.richText.map((r) => r.text).join('').trim();
-    if (obj.result != null) return String(obj.result).trim();
-  }
-  return '';
+interface ParseCacheEntry {
+  filePath: string;
+  parsed: GlossaryParseResult;
+  expiresAt: number;
 }
 
 /**
- * Parse a .xlsx workbook: first sheet, first three columns =
- * English / 简体中文 / 繁體中文.
+ * Import parse sessions keyed by `parseId`. The renderer only sends the id
+ * back, so large files never cross the process boundary twice and the
+ * renderer cannot tamper with the imported rows (design §2.4.1).
  */
-async function parseXlsx(filePath: string): Promise<MappingImportRow[]> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const sheet = workbook.worksheets[0];
-  if (!sheet) return [];
-  const rows: MappingImportRow[] = [];
-  sheet.eachRow((row, rowNumber) => {
-    const en = cellToString(row.getCell(1).value);
-    const zhCN = cellToString(row.getCell(2).value);
-    const zhTW = cellToString(row.getCell(3).value);
-    if (rowNumber === 1 && HEADER_RE.test(en)) return; // header row
-    if (!en && !zhCN && !zhTW) return; // skip fully empty rows
-    rows.push({ en, zhCN, zhTW });
+const parseCache = new Map<string, ParseCacheEntry>();
+
+function cleanupParseCache(): void {
+  const now = Date.now();
+  for (const [id, entry] of parseCache) {
+    if (entry.expiresAt < now) parseCache.delete(id);
+  }
+}
+
+/** Find a cached parse session or throw a user-facing error. */
+function requireParseEntry(parseId: string): ParseCacheEntry {
+  cleanupParseCache();
+  const entry = parseCache.get(parseId);
+  if (!entry) {
+    throw new Error('The import session has expired. Select the file again to continue.');
+  }
+  return entry;
+}
+
+/** Re-parse the file when the user changed the sheet or column mapping. */
+async function resolveParsed(
+  entry: ParseCacheEntry,
+  options: { sheetIndex?: number; columnOverride?: GlossaryColumnOverride }
+): Promise<GlossaryParseResult> {
+  if (options.sheetIndex === undefined && !options.columnOverride) {
+    return entry.parsed;
+  }
+  const parsed = await parseGlossaryFile(entry.filePath, {
+    sheetIndex: options.sheetIndex ?? entry.parsed.sheetIndex,
+    columnOverride: options.columnOverride,
   });
-  return rows;
-}
-
-/** Minimal robust CSV parser: BOM, quoted fields, escaped quotes, CRLF/LF. */
-function parseCsv(text: string): string[][] {
-  const content = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < content.length; i++) {
-    const ch = content[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (content[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ',') {
-      row.push(field);
-      field = '';
-    } else if (ch === '\n') {
-      row.push(field);
-      field = '';
-      rows.push(row);
-      row = [];
-    } else {
-      field += ch;
-    }
-  }
-  // Last field/row (no trailing newline).
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
-}
-
-/** Parse a .csv file: first three columns = English / 简体中文 / 繁體中文. */
-function parseCsvFile(filePath: string): MappingImportRow[] {
-  const text = fs.readFileSync(filePath, 'utf-8');
-  const parsed = parseCsv(text);
-  const rows: MappingImportRow[] = [];
-  for (let i = 0; i < parsed.length; i++) {
-    const cells = parsed[i];
-    const en = (cells[0] ?? '').trim();
-    const zhCN = (cells[1] ?? '').trim();
-    const zhTW = (cells[2] ?? '').trim();
-    if (i === 0 && HEADER_RE.test(en)) continue; // header row
-    if (!en && !zhCN && !zhTW) continue;
-    rows.push({ en, zhCN, zhTW });
-  }
-  return rows;
-}
-
-/** Parse an import file (.xlsx / .csv) into three-column rows. */
-export async function parseMappingFile(filePath: string): Promise<MappingImportRow[]> {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.xlsx' || ext === '.xls') {
-    return parseXlsx(filePath);
-  }
-  if (ext === '.csv') {
-    return parseCsvFile(filePath);
-  }
-  throw new Error(formatUi(ui.backend.unsupportedMappingFormat, { extension: ext || '(no extension)' }));
+  entry.parsed = parsed;
+  return parsed;
 }
 
 export function registerMappingHandlers(service: MappingService): void {
   ipcMain.handle(IPC_CHANNELS.MAPPING_LIST, async (_event, payload: MappingListPayload) => {
-    return service.listMappings(payload?.search);
+    return service.listMappings({
+      search: payload?.search,
+      offset: payload?.offset,
+      limit: payload?.limit,
+      kind: payload?.kind,
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.MAPPING_ADD, async (_event, payload: MappingAddPayload) => {
     log.info('[Mapping][IPC] mapping:add', { en: payload.en });
-    return service.addMapping(payload.en, payload.zhCN, payload.zhTW);
+    return service.addMapping(
+      payload.en,
+      payload.zhCN,
+      payload.zhTW,
+      payload.kind,
+      payload.doNotUse
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.MAPPING_UPDATE, async (_event, payload: MappingUpdatePayload) => {
     log.info('[Mapping][IPC] mapping:update', { id: payload.id });
-    return service.updateMapping(payload.id, payload.en, payload.zhCN, payload.zhTW);
+    return service.updateMapping(
+      payload.id,
+      payload.en,
+      payload.zhCN,
+      payload.zhTW,
+      payload.kind,
+      payload.doNotUse
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.MAPPING_DELETE, async (_event, payload: MappingDeletePayload) => {
     service.deleteMapping(payload.id);
+  });
+
+  /** P4-1: list glossary backup files (newest first). */
+  ipcMain.handle(IPC_CHANNELS.MAPPING_BACKUPS, async () => {
+    const items = service.listBackups();
+    log.info('[Mapping][IPC] mapping:backups', { count: items.length });
+    return { items };
+  });
+
+  /** P4-1: restore one backup file (the current table is backed up first). */
+  ipcMain.handle(IPC_CHANNELS.MAPPING_RESTORE, async (_event, payload: MappingRestorePayload) => {
+    const result = service.restoreBackup(payload.fileName);
+    log.info('[Mapping][IPC] mapping:restore', { fileName: payload.fileName, ...result });
+    return result;
+  });
+
+  /** P4-2: list applied import batches. */
+  ipcMain.handle(IPC_CHANNELS.MAPPING_BATCHES, async () => {
+    const items = service.listBatches();
+    log.info('[Mapping][IPC] mapping:batches', { count: items.length });
+    return { items };
+  });
+
+  /** P4-2: undo one import batch. */
+  ipcMain.handle(IPC_CHANNELS.MAPPING_BATCH_UNDO, async (_event, payload: MappingBatchUndoPayload) => {
+    const result = service.undoBatch(payload.batchId);
+    log.info('[Mapping][IPC] mapping:batchUndo', result);
+    return result;
   });
 
   ipcMain.handle(IPC_CHANNELS.MAPPING_STATS, async () => {
@@ -150,29 +142,51 @@ export function registerMappingHandlers(service: MappingService): void {
   });
 
   /**
-   * Open a file dialog, parse the selected Excel/CSV file and return the
-   * parsed rows so the renderer can preview them before importing.
+   * Open a file dialog, parse the selected Excel/CSV file, cache the result
+   * and return the detected columns + a first import plan (append/overwrite).
    */
   ipcMain.handle(IPC_CHANNELS.MAPPING_IMPORT_PARSE, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win!, {
       properties: ['openFile'],
       filters: [
-        { name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] },
-        { name: ui.backend.excelWorkbook, extensions: ['xlsx', 'xls'] },
+        { name: 'Excel / CSV', extensions: ['xlsx', 'csv'] },
+        { name: ui.backend.excelWorkbook, extensions: ['xlsx'] },
         { name: 'CSV', extensions: ['csv'] },
       ],
       title: ui.backend.chooseGlossaryFile,
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];
+
     try {
-      const rows = await parseMappingFile(filePath);
-      log.info('[Mapping][IPC] mapping:importParse', {
-        fileName: path.basename(filePath),
-        rowCount: rows.length,
+      cleanupParseCache();
+      const parsed = await parseGlossaryFile(filePath);
+      const parseId = randomUUID();
+      parseCache.set(parseId, {
+        filePath,
+        parsed,
+        expiresAt: Date.now() + PARSE_TTL_MS,
       });
-      return { fileName: path.basename(filePath), rows };
+      const { plan } = service.planImport(parsed.rows, 'append', 'overwrite', false);
+      log.info('[Mapping][IPC] mapping:importParse', {
+        fileName: parsed.fileName,
+        rows: parsed.rows.length,
+        sheet: parsed.sheets[parsed.sheetIndex],
+        detectedBy: parsed.columns.detectedBy,
+      });
+
+      const response: MappingImportParseResult = {
+        parseId,
+        fileName: parsed.fileName,
+        sheets: parsed.sheets,
+        sheetIndex: parsed.sheetIndex,
+        columns: parsed.columns,
+        preview: parsed.rows.slice(0, 20),
+        plan,
+        warnings: parsed.warnings,
+      };
+      return response;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error('[Mapping][IPC] mapping:importParse failed', { error: message });
@@ -180,8 +194,84 @@ export function registerMappingHandlers(service: MappingService): void {
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.MAPPING_IMPORT, async (_event, payload: MappingImportPayload) => {
-    log.info('[Mapping][IPC] mapping:import', { rowCount: payload.rows?.length ?? 0 });
-    return service.importMappings(payload.rows ?? []);
+  /** Recompute the import plan after the user changes mode / strategy / mapping. */
+  ipcMain.handle(
+    IPC_CHANNELS.MAPPING_IMPORT_PLAN,
+    async (_event, payload: MappingImportOptionsPayload): Promise<MappingImportPlanResult> => {
+      const entry = requireParseEntry(payload.parseId);
+      const parsed = await resolveParsed(entry, payload);
+      const { plan } = service.planImport(
+        parsed.rows,
+        payload.mode,
+        payload.strategy,
+        payload.keepDefaults
+      );
+      return {
+        parseId: payload.parseId,
+        sheets: parsed.sheets,
+        sheetIndex: parsed.sheetIndex,
+        columns: parsed.columns,
+        preview: parsed.rows.slice(0, 20),
+        plan,
+        warnings: parsed.warnings,
+      };
+    }
+  );
+
+  /** Apply the import. The rows come from the main-process cache only. */
+  ipcMain.handle(IPC_CHANNELS.MAPPING_IMPORT, async (_event, payload: MappingImportOptionsPayload) => {
+    const entry = requireParseEntry(payload.parseId);
+    const parsed = await resolveParsed(entry, payload);
+    const result = service.applyImport(
+      parsed.fileName,
+      parsed.rows,
+      payload.mode,
+      payload.strategy,
+      payload.keepDefaults
+    );
+    parseCache.delete(payload.parseId);
+    return result;
+  });
+
+  /** Export the whole glossary as a four-column .xlsx workbook. */
+  ipcMain.handle(IPC_CHANNELS.MAPPING_EXPORT, async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const result = await dialog.showSaveDialog(win!, {
+      title: ui.settings.exportGlossaryDialogTitle,
+      defaultPath: `glossary-${stamp}.xlsx`,
+      filters: [{ name: ui.backend.excelWorkbook, extensions: ['xlsx'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+
+    const rows = service.listAllMappings();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Glossary');
+    sheet.columns = [
+      { header: 'No.', key: 'no', width: 8 },
+      { header: 'en-US', key: 'en', width: 42 },
+      { header: 'zh-CN', key: 'zhCN', width: 28 },
+      { header: 'zh-TW', key: 'zhTW', width: 28 },
+      { header: 'Do not use', key: 'doNotUse', width: 24 },
+      { header: 'Kind', key: 'kind', width: 10 },
+      { header: 'Origin', key: 'origin', width: 10 },
+    ];
+    rows.forEach((row, index) => {
+      sheet.addRow({
+        no: row.seqNo ?? index + 1,
+        en: row.en,
+        zhCN: row.zhCN,
+        zhTW: row.zhTW,
+        doNotUse: (row.doNotUse ?? []).join('; '),
+        kind: row.kind,
+        origin: row.origin,
+      });
+    });
+    await workbook.xlsx.writeFile(result.filePath);
+    log.info('[Mapping][IPC] mapping:export', {
+      file: path.basename(result.filePath),
+      rows: rows.length,
+    });
+    return result.filePath;
   });
 }

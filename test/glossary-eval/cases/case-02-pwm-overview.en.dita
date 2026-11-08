@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<concept id="esp32-pwm-overview">
+  <title>ESP32 PWM Overview</title>
+  <shortdesc>LEDC peripheral capabilities for PWM generation.</shortdesc>
+  <conbody>
+    <section>
+      <title>Executive Summary</title>
+      <p>The ESP32 LEDC peripheral generates pulse width modulation signals with a configurable
+      duty cycle, frequency, and resolution. Each channel maps to one output pin.</p>
+      <p>Configure the dead time before enabling the H-bridge driver to prevent shoot-through.</p>
+      <p>The duty-cycle register is double-buffered and latched at the next period boundary.</p>
+    </section>
+    <section>
+      <title>Technical Specifications</title>
+      <ul>
+        <li>Clock source: APB clock at 80 MHz.</li>
+        <li>Resolution: up to 20 bits in low-speed mode.</li>
+        <li>Frequency range depends on the resolution.</li>
+        <li>Idle level is configurable per channel.</li>
+      </ul>
+    </section>
+  </conbody>
+</concept>

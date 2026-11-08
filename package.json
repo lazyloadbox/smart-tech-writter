@@ -12,7 +12,15 @@
     "publish": "electron-forge publish",
     "dist:portable": "electron-builder --win portable",
     "version:bump": "node scripts/bump-version.mjs",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx .",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "gen:glossary-sample": "node test/mock-case-02/generate-sample.mjs",
+    "gen:glossary-phrases": "node test/mock-case-03/generate-phrase-sample.mjs",
+    "eval:glossary": "node scripts/eval-glossary.mjs --check --write",
+    "spike:embedding": "node test/spike-embedding/spike.mjs",
+    "spike:embedding:quality": "node test/spike-embedding/quality.mjs",
+    "model:package": "node scripts/build-model-package.mjs"
   },
   "build": {
     "appId": "com.smarttechwriter.app",
@@ -26,7 +34,9 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "**/*.node"
+      "**/*.node",
+      "**/*.dll",
+      "**/*.wasm"
     ],
     "npmRebuild": true,
     "win": {
@@ -71,7 +81,8 @@
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.1",
     "typescript": "^5.9.3",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "@langchain/core": "^1.2.0",
@@ -85,6 +96,8 @@
     "exceljs": "^4.4.0",
     "mailparser": "^3.9.11",
     "mammoth": "^1.12.0",
+    "onnxruntime-node": "^1.31.1",
+    "onnxruntime-web": "^1.31.1",
     "openai": "^6.44.0",
     "pdf-parse": "^2.4.5",
     "react": "^19.2.7",

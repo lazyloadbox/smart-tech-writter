@@ -4,6 +4,7 @@ import log from 'electron-log';
 import type { AIProvider, AIStreamChunk } from '../ai-providers/base.provider';
 import { DitaLocalizerAgent } from '../agents/dita-localizer.agent';
 import { DitaReviewerAgent } from '../agents/dita-reviewer.agent';
+import { mergeRuleComments } from '../agents/reviewer.agent';
 import {
   loadPromptOverrides,
   buildAiEditArtifactSystemPrompt,
@@ -12,6 +13,9 @@ import {
 } from '../prompts';
 import type { AiArtifactFormat } from '../../../shared/types/ipc.types';
 import { validateAndRepairDitaXml } from '../document-builder/dita.builder';
+import { assembleDocumentChunks, planDocumentChunks } from './chunked-translation';
+import type { GlossaryService } from '../glossary/glossary.service';
+import type { GlossaryHit } from '../../../shared/types/glossary.types';
 import type { LocalizeLanguage, DocumentDraft } from '../../../shared/types/document.types';
 import type {
   LocalizationFileResult,
@@ -59,6 +63,8 @@ function getExportFileName(fileName: string, lang: LocalizeLanguage): string {
 export class LocalizationService {
   private provider: AIProvider;
   private mappingService: MappingService;
+  /** Matching engine (P2a). When absent the legacy 500-row prompt block is used. */
+  private glossary: GlossaryService | null = null;
   private results: LocalizationFileResult[] = [];
   private stage: LocalizationStage = 'localize';
   private status: LocalizationStatus = 'idle';
@@ -80,6 +86,11 @@ export class LocalizationService {
   /** Hot-swap the mapping service (used by tests / future wiring). */
   updateMappingService(mappingService: MappingService): void {
     this.mappingService = mappingService;
+  }
+
+  /** Attach the glossary matching engine (called from `main/index.ts`). */
+  setGlossaryService(glossary: GlossaryService): void {
+    this.glossary = glossary;
   }
 
   getStatus(): LocalizationStatus {
@@ -246,13 +257,6 @@ export class LocalizationService {
     this.results = [];
     const total = filePaths.length;
     const promptOverrides = loadPromptOverrides();
-    // Extract the glossary relevant to the target language once for the whole
-    // run and inject it into the translation prompt so the AI reuses the
-    // established terminology.
-    const mapping = this.mappingService.getMappingContext(targetLanguage);
-    if (mapping.count > 0) {
-      log.info('[Localize] translation mapping loaded', { targetLanguage, entries: mapping.count });
-    }
 
     try {
       for (let i = 0; i < filePaths.length; i++) {
@@ -262,6 +266,8 @@ export class LocalizationService {
 
         try {
           const originalContent = fs.readFileSync(filePath, 'utf-8');
+          // P2a: relevance-filtered glossary for THIS file (design §2.7.3).
+          const glossary = await this.resolveGlossaryContext(targetLanguage, originalContent);
           const agent = new DitaLocalizerAgent(this.provider, {
             promptOverride: promptOverrides.ditaLocalizer,
             maxTokens: 128000,
@@ -270,7 +276,13 @@ export class LocalizationService {
             emitter.onStream({ fileName, chunk });
           });
 
-          const translated = await agent.translateDita(originalContent, targetLanguage, mapping.text);
+          const translated = await this.translateDocument(
+            agent,
+            originalContent,
+            targetLanguage,
+            glossary.text,
+            fileName
+          );
           // Validate the translation and auto-repair common XML issues
           // (unescaped `&`/`<`, unclosed tags) so the result is well-formed.
           const v = validateAndRepairDitaXml(translated);
@@ -282,6 +294,7 @@ export class LocalizationService {
           } else if (v.repaired) {
             log.warn('[Localize] translated DITA auto-repaired', { fileName });
           }
+          this.runTerminologySelfCheck(originalContent, v.content, glossary.hits, targetLanguage, fileName);
 
           this.results.push({
             sourcePath: filePath,
@@ -348,7 +361,6 @@ export class LocalizationService {
     this.status = 'running';
     this.stage = 'localize_ai_review';
     const promptOverrides = loadPromptOverrides();
-    const mapping = this.mappingService.getMappingContext(this.targetLanguage);
     const done = this.results.filter((r) => r.status === 'done');
     const total = done.length;
 
@@ -357,6 +369,7 @@ export class LocalizationService {
         const r = done[i];
         emitter.onProgress({ stage: 'localize_ai_review', fileName: r.fileName, index: i, total, status: 'started' });
         try {
+          const glossary = await this.resolveGlossaryContext(this.targetLanguage, r.originalContent);
           const agent = new DitaReviewerAgent(this.provider, {
             mode: 'localize_ai_review',
             promptOverride: promptOverrides?.['reviewer.localizeAiReview'],
@@ -365,7 +378,16 @@ export class LocalizationService {
           agent.setStreamCallback((chunk) => {
             emitter.onStream({ fileName: r.fileName, chunk });
           });
-          r.reviewComments = await agent.review(r.content, r.originalContent, r.targetLanguage, r.sourcePath, mapping.text);
+          const aiComments = await agent.review(r.content, r.originalContent, r.targetLanguage, r.sourcePath, glossary.text);
+          // P3: append deterministic R3/R4 findings from the glossary rule layer.
+          const ruleComments = this.glossary?.checkLocalized(
+            r.originalContent,
+            r.content,
+            glossary.hits,
+            r.targetLanguage,
+            r.sourcePath
+          ) ?? [];
+          r.reviewComments = mergeRuleComments(aiComments, ruleComments);
           emitter.onProgress({ stage: 'localize_ai_review', fileName: r.fileName, index: i, total, status: 'done' });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -407,7 +429,6 @@ export class LocalizationService {
     this.status = 'running';
     this.stage = 'post_edit_review';
     const promptOverrides = loadPromptOverrides();
-    const mapping = this.mappingService.getMappingContext(this.targetLanguage);
     const done = this.results.filter((r) => r.status === 'done');
     const total = done.length;
 
@@ -416,6 +437,7 @@ export class LocalizationService {
         const r = done[i];
         emitter.onProgress({ stage: 'post_edit_review', fileName: r.fileName, index: i, total, status: 'started' });
         try {
+          const glossary = await this.resolveGlossaryContext(this.targetLanguage, r.originalContent);
           const agent = new DitaReviewerAgent(this.provider, {
             mode: 'post_edit_review',
             promptOverride: promptOverrides?.['reviewer.postEditReview'],
@@ -424,7 +446,15 @@ export class LocalizationService {
           agent.setStreamCallback((chunk) => {
             emitter.onStream({ fileName: r.fileName, chunk });
           });
-          r.postEditComments = await agent.review(r.content, r.originalContent, r.targetLanguage, r.sourcePath, mapping.text);
+          const aiComments = await agent.review(r.content, r.originalContent, r.targetLanguage, r.sourcePath, glossary.text);
+          const ruleComments = this.glossary?.checkLocalized(
+            r.originalContent,
+            r.content,
+            glossary.hits,
+            r.targetLanguage,
+            r.sourcePath
+          ) ?? [];
+          r.postEditComments = mergeRuleComments(aiComments, ruleComments);
           emitter.onProgress({ stage: 'post_edit_review', fileName: r.fileName, index: i, total, status: 'done' });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -550,8 +580,129 @@ export class LocalizationService {
     return count;
   }
 
-  /** Apply human-edited drafts (id = sourcePath) back onto the results. */
-  private applyEdits(editedDrafts: DocumentDraft[]): void {
+  // ── P2a: glossary-aware, chunked translation ──────────────────────────────
+
+  /**
+   * Build the glossary block for one source file.
+   * Uses the matching engine when available (relevance-filtered), otherwise
+   * falls back to the legacy full-table prompt block.
+   */
+  private async resolveGlossaryContext(
+    targetLanguage: LocalizeLanguage,
+    sourceText: string
+  ): Promise<{ text: string; count: number; hits: GlossaryHit[] }> {
+    if (this.glossary) {
+      const context = await this.glossary.buildTranslationContext(targetLanguage, sourceText);
+      if (context.count > 0) {
+        log.info('[Localize] glossary matched for file', {
+          targetLanguage,
+          entries: context.count,
+          tokens: context.tokens,
+          truncated: context.truncated,
+        });
+      }
+      return { text: context.text, count: context.count, hits: context.hits };
+    }
+    const legacy = this.mappingService.getMappingContext(targetLanguage, sourceText);
+    return { text: legacy.text, count: legacy.count, hits: [] };
+  }
+
+  /**
+   * Translate one DITA document.
+   *
+   * Documents larger than `chunkThresholdChars.translate` are split by
+   * top-level `<section>` (design §2.7.4): the intro and every section are
+   * translated as complete, well-formed DITA files and reassembled afterwards.
+   * This avoids truncated output and keeps each prompt small.
+   */
+  private async translateDocument(
+    agent: DitaLocalizerAgent,
+    xml: string,
+    targetLanguage: LocalizeLanguage,
+    glossaryBlock: string,
+    fileName: string
+  ): Promise<string> {
+    const threshold = this.glossary?.getSettings().chunkThresholdChars.translate ?? 30000;
+    const chunks = planDocumentChunks(xml, threshold);
+    if (!chunks || chunks.length <= 1) {
+      if (!chunks && xml.length > threshold) {
+        log.info('[Localize] document is large but has no splittable sections', {
+          fileName,
+          chars: xml.length,
+        });
+      }
+      return agent.translateDita(xml, targetLanguage, glossaryBlock);
+    }
+
+    log.info('[Localize] translating document in chunks', {
+      fileName,
+      chars: xml.length,
+      chunks: chunks.length,
+    });
+
+    const translated: string[] = [];
+    for (const chunk of chunks) {
+      translated.push(
+        await this.translateChunk(
+          agent,
+          chunk.xml,
+          targetLanguage,
+          glossaryBlock,
+          fileName,
+          chunk.index,
+          chunks.length
+        )
+      );
+    }
+
+    return assembleDocumentChunks(xml, translated);
+  }
+
+  /** Translate one chunk and log its position (design §2.7.4 progress). */
+  private async translateChunk(
+    agent: DitaLocalizerAgent,
+    xml: string,
+    targetLanguage: LocalizeLanguage,
+    glossaryBlock: string,
+    fileName: string,
+    index: number,
+    total: number
+  ): Promise<string> {
+    log.info('[Localize] translating chunk', {
+      fileName,
+      chunk: `${index}/${total}`,
+      chars: xml.length,
+      glossaryEntries: glossaryBlock
+        ? glossaryBlock.split('\n').filter((line) => line.includes('\t') && !line.startsWith('#')).length
+        : 0,
+    });
+    return agent.translateDita(xml, targetLanguage, glossaryBlock);
+  }
+
+  /** Deterministic R3 self-check (design §2.7.4 "译后自检"). */
+  private runTerminologySelfCheck(
+    sourceText: string,
+    translatedText: string,
+    hits: GlossaryHit[],
+    targetLanguage: LocalizeLanguage,
+    fileName: string
+  ): void {
+    if (!this.glossary || hits.length === 0) return;
+    try {
+      const issues = this.glossary.checkTranslation(sourceText, translatedText, hits, targetLanguage);
+      if (issues.length > 0) {
+        log.warn('[Localize] terminology self-check found deviations', {
+          fileName,
+          count: issues.length,
+          sample: issues.slice(0, 3).map((i) => `${i.sourceTerm} → ${i.expected}`),
+        });
+      }
+    } catch (err) {
+      log.warn('[Localize] terminology self-check failed:', err);
+    }
+  }
+
+  /** Apply human-edited drafts (id = sourcePath) back onto the results. */  private applyEdits(editedDrafts: DocumentDraft[]): void {
     for (const draft of editedDrafts) {
       const result = this.results.find((r) => r.sourcePath === draft.id);
       if (result && result.status === 'done') {

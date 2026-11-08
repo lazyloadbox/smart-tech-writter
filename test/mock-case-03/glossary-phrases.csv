@@ -1,0 +1,43 @@
+﻿No.,en-US,zh-CN,zh-TW,Do not use
+1,"During a firmware update, do not disconnect the power supply.",固件升级过程中，请勿断开电源。,韌體更新期間，請勿中斷電源供應。,firmware upgrade
+2,The device restarts automatically after the configuration is applied.,配置生效后，设备会自动重启。,設定生效後，裝置會自動重新啟動。,the device will reboot by itself
+3,Make sure the antenna is connected before you power on the module.,上电前请确认天线已连接。,開機前請確認天線已連接。,
+4,Do not expose the module to temperatures above 85 degrees Celsius.,请勿将模块暴露在 85 摄氏度以上的环境中。,請勿將模組暴露於 85 度 C 以上的環境中。,
+5,Read the safety instructions before you install the power supply.,安装电源前请阅读安全说明。,安裝電源前請閱讀安全說明。,
+6,Wait for the capacitor to discharge before you open the housing.,打开外壳前请等待电容放电完毕。,打開外殼前請等待電容放電完畢。,
+7,Replace the battery only with the same model or an equivalent type.,请仅使用同型号或同等规格的电池进行更换。,請僅使用同型號或同等規格的電池進行更換。,
+8,Keep the cable away from high-voltage lines.,请让电缆远离高压线。,請讓纜線遠離高壓線。,
+9,Keep the duty cycle below 50 percent to avoid overheating the driver.,请将占空比保持在 50% 以下，以免驱动器过热。,請將佔空比維持在 50% 以下，以免驅動器過熱。,duty ratio
+10,Connect the oscilloscope probe to the PWM output pin.,将示波器探头连接到 PWM 输出引脚。,將示波器探棒連接到 PWM 輸出腳位。,
+11,The measured signal does not match the configured frequency.,实测信号与配置频率不一致。,,
+12,Verify the output voltage with a calibrated multimeter.,请使用已校准的万用表验证输出电压。,請使用已校正的電壓表驗證輸出電壓。,multi-meter
+13,Tighten the screws to a torque of 1.5 newton-meters.,请将螺钉拧紧至 1.5 牛米的扭矩。,請將螺絲鎖緊至 1.5 牛頓米的扭力。,
+14,All measurements were taken at room temperature.,所有测量均在室温下完成。,所有量測均在室溫下完成。,room temp
+15,The LED flashes three times when the self-test passes.,自检通过时，LED 会闪烁三次。,自我測試通過時，LED 會閃爍三次。,
+16,Press and hold the reset button for five seconds to restore the defaults.,按住复位按钮五秒可恢复默认设置。,按住重設按鈕五秒可還原預設值。,restart button | reboot button
+17,Apply power only after the wiring is complete.,请仅在接线完成后上电。,請僅在接線完成後通電。,turn on the power
+18,Do not touch the heat sink during operation.,运行期间请勿触摸散热片。,運轉期間請勿觸碰散熱片。,heatsink
+19,Reboot the controller if the display is blank.,如果显示屏无显示，请重启控制器。,如果顯示器沒有畫面，請重新啟動控制器。,restart the controller
+20,Use a shielded cable for the signal input.,信号输入请使用屏蔽电缆。,,
+21,Close the enclosure before you start the test.,开始测试前请合上外壳。,開始測試前請關閉外殼。,
+22,"If the error persists, contact technical support.",如果错误仍然存在，请联系技术支持。,如果錯誤仍然存在，請聯絡技術支援。,tech support
+23,The system enters low-power mode after thirty seconds of inactivity.,系统在三十秒无操作后进入低功耗模式。,系統在三十秒無操作後進入低功耗模式。,
+24,This section describes how to configure the PWM peripheral.,本节介绍如何配置 PWM 外设。,本節說明如何設定 PWM 周邊。,
+25,The following table lists the supported operating voltages.,下表列出了支持的工作电压。,下表列出支援的工作電壓。,
+26,Configuration changes take effect only after a full power cycle.,配置更改仅在完全断电重启后生效。,設定變更僅在完全斷電重新啟動後生效。,
+27,The warranty does not cover damage caused by improper installation.,因安装不当造成的损坏不在保修范围内。,因安裝不當造成的損壞不在保固範圍內。,
+28,Record the serial number before you return the module.,退回模块前请记录序列号。,退回模組前請記錄序號。,
+29,Make sure the grounding terminal is connected to earth.,请确认接地端子已连接到大地。,請確認接地端子已連接到大地。,
+30,Replace the filter every twelve months or after 2000 hours of operation.,请每十二个月或在运行 2000 小时后更换过滤器。,請每十二個月或在運轉 2000 小時後更換濾網。,air filter
+31,Recommended operating conditions for the PWM output stage,PWM 输出级的推荐工作条件,PWM 輸出級的建議工作條件,
+32,Maximum allowable junction temperature of the voltage regulator,稳压器的最高允许结温,穩壓器的最高允許接面溫度,
+33,Factory default configuration of the timer module,定时器模块的出厂默认配置,計時器模組的出廠預設設定,
+34,Electrical isolation requirements for the control cabinet,控制柜的电气隔离要求,控制櫃的電氣隔離要求,
+35,Recommended storage conditions for lithium battery packs,锂电池组的推荐存储条件,鋰電池組的建議儲存條件,
+36,Periodic maintenance schedule for the cooling fan assembly,冷却风扇组件的定期维护计划,冷卻風扇組件的定期保養排程,
+37,Important safety precautions when handling electrostatic-sensitive devices,处理静电敏感器件时的重要安全注意事项,處理靜電敏感元件時的重要安全注意事項,
+38,Typical wiring diagram of the analog input module,模拟量输入模块的典型接线图,類比輸入模組的典型接線圖,connection diagram
+39,Design guidelines for electromagnetic compatibility and immunity testing,电磁兼容性与抗扰度测试的设计指南,電磁相容性與抗擾度測試的設計指南,
+40,Step-by-step procedure to calibrate the current sensor,校准电流传感器的分步操作步骤,校正電流感測器的逐步操作程序,
+41,Troubleshooting checklist for recurring communication timeout errors,通信超时错误的排查清单,通訊逾時錯誤的疑難排解檢查清單,
+42,Minimum clearance between the heat sink and the enclosure wall,散热片与外壳壁之间的最小间隙,散熱片與外殼壁之間的最小間隙,

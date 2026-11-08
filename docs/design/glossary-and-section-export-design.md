@@ -1,10 +1,12 @@
 # 设计与实现方案：英中术语/用语映射库 & 按章节拆分导出
 
-> 版本：v1.4 · 日期：2026-11-08 · 适用代码基线：当前 `main` 分支
+> 版本：v1.6 · 日期：2026-11-08 · 适用代码基线：当前 `main` 分支
 > v1.1 变更：针对千–万级映射重写 2.5（分层匹配引擎：精确/变体/模糊/语义/AI 抽取与裁决、分级注入、上下文预算、worker 索引与加载优化、评测）；2.6–2.8 改为基于引擎的分块处理；实施计划拆出 P2a/P2b/P2c。
 > v1.2 变更：L4 语义层改为**完全本地**（ONNX 多语种小模型 + SQLite BLOB + 内存暴力检索，不再依赖远程 embedding API），并给出成本评估与 go/no-go 标准；取消辅助模型；确认术语命中人工确认、句子类条目按推荐处理（Q10–Q13 已定）。
 > v1.3 变更：新增 2.5.6.6（模型在线下载 + 离线安装包/文件夹安装、导出离线包、原子安装、状态机）与 2.5.6.7（下载/安装/加载/运行失败时的向后兼容与降级、熔断）；新增 2.11.3 模型卡片 UI；同步 IPC、配置、测试、计划、风险（Q14/Q15）。
 > v1.4 变更：确定提供**兼容模式**（onnxruntime-web WASM 后端），新增 2.5.6.8；运行时后端可选「自动 / 原生 / 兼容模式」（Q15 已定）。
+> v1.5 变更：P0 准备阶段已执行完成（7.1 记录）：P0-1 样例文件、P0-3 vitest、P0-4 评测集与基线、P0-5 本地 embedding spike 均交付；spike 结论 **GO**，按实测修订向量一致性门槛（Q16）与兼容模式内存预算（Q17），报告见 `p0-5-embedding-spike-report.md`。
+> v1.6 变更：P4 体验完善已执行完成（7.4 记录）：备份列表/恢复、导入批次撤销、“Do not use”禁用写法（导入 + R7 规则）、analyze 阶段术语注入、术语使用报告、向量索引快照与可选 HNSW、Writer 工具调用查询；架构文档 04–08 同步更新。
 > 范围：功能一「英中 mapping 列表导入与 AI 全链路参考」；功能二「最终导出按 Section Title 拆分子文件」
 
 ---
@@ -525,6 +527,13 @@ flowchart LR
 | 降级 | 分别模拟：下载中断、校验失败、模型文件损坏、onnxruntime 原生模块加载失败、推理中 worker 崩溃。以上情况工作流都能继续完成，结果等同于“未启用 L4” |
 | 兼容模式（WASM） | 原生后端不可用时，兼容模式能完成推理，且向量与原生后端余弦 ≥ 0.999。兼容模式**一定提供**；单条 ≤ 60 ms、建索引 5k ≤ 8 分钟为性能目标。达不到时仍保留并开启 2.5.6.8 的限流策略，不作为 no-go 条件 |
 
+> **P0-5 实测结论（2026-11-08，详见 [p0-5-embedding-spike-report.md](./p0-5-embedding-spike-report.md)）**：
+> 全部检查项通过（GO）。原生后端加载 344 ms、单条 1.8 ms、5k 建索引约 5.3 s、进程峰值 367 MB；
+> 兼容后端加载 502 ms、单条 4.5 ms、5k 约 20.9 s（Node），但 Electron worker 内 RSS 为 648–813 MB，
+> **400 MB 预算仅适用于原生后端**（兼容模式建议单线程 + 空闲时终止 worker）。
+> 向量一致性实测 **0.998634**（int8，最小）、平均 0.999890，同时候选互换性 98–100%，因此阈值修订为
+> **≥ 0.995 且 top-1↔top-5 候选互换性 ≥ 95%**；纯 JS 分词器与官方实现逐 id 一致（290/290）。
+
 ##### 2.5.6.6 模型获取与安装：在线下载 + 本地离线安装
 
 为应对网络不好、无法下载的情况，模型有三种安装渠道，全部走同一套“暂存 → 校验 → 试推理 → 原子启用”流程：
@@ -624,7 +633,7 @@ v1.4 确定：本版本**提供兼容模式**，用于原生推理库在用户�
 | 分发 | 随安装包 | 随安装包（约 +10 MB），**不需要额外下载** |
 | 模型文件 | 同一份 ONNX 模型，两种后端共用，不需要重新安装 | 同左 |
 | 性能（估算） | 单条 5–15 ms；5k 条建索引 0.5–2 分钟 | 慢 2–4 倍：单条 15–60 ms；5k 条建索引约 2–8 分钟 |
-| 结果 | 基准 | 与原生向量余弦 ≥ 0.999（P0-5 验证），**两种模式的向量可以混用**，切换模式不需要重建索引 |
+| 结果 | 基准 | 与原生向量余弦 ≥ 0.995（P0-5 实测 int8 最小 0.9986、平均 0.9999；top-1↔top-5 候选互换性 98–100%），**两种模式的向量可以混用**，切换模式不需要重建索引 |
 
 **后端选择**（设置项 `localEmbedding.runtimeBackend`）：
 
@@ -1152,12 +1161,14 @@ export function composeSectionFile(r: DitaSplitResult, s: SplitSection, opts: { 
 
 - `NN`：从 01 开始，零填充宽度 = `max(2, String(count).length)`；**序号按导出的子文件顺序连续编号**（用户取消勾选的 section 不占号）。是否改为“保留原始章节序号”作为选项（默认连续）。
 - `SafeTitle`：
-  1. 替换 Windows 非法字符 `<>:"/\|?*` 与控制字符为 `-`；
-  2. 空白折叠为单个空格，去首尾空格与结尾的 `.`；
-  3. 截断到 80 个字符（按 code point，避免截断代理对）；
-  4. 若为保留名（`CON PRN AUX NUL COM1-9 LPT1-9`，大小写不敏感）→ 加 `_` 前缀；
-  5. 为空 → `Section`；
-  6. 中文保留原样。
+  1. 去掉标题自带的序号前缀（`1.`、`2)`、`3、`、`4: `、`5 - `），避免与 `NN_` 形成双重编号；标题本身为 `5 kHz PWM`、`2:1 Multiplexer` 这类数字时不处理；section 内部的 `<title>` 保持原样；
+  2. 替换 Windows 非法字符 `<>:"/\|?*` 与控制字符为 `-`；
+  3. 空白折叠为单个空格，去首尾空格与结尾的 `.`；
+  4. 截断到 80 个字符（按 code point，避免截断代理对）；
+  5. 若为保留名（`CON PRN AUX NUL COM1-9 LPT1-9`，大小写不敏感）→ 加 `_` 前缀；
+  6. 为空 → `Section`；
+  7. 中文保留原样。
+- 扩展名只拼接一次：`baseName` 不含扩展名，DITA 与 DOCX 分别由 `{baseName}.dita` / `{baseName}.docx` 生成（避免出现 `01_Title.dita.dita`）。
 - 同名冲突（两个 section 标题相同）：序号已保证唯一，无需额外处理。
 - 输出目录：用户选择目录下新建子目录 `{SafeDocTitle}_sections/`（已存在则追加 ` (2)`），避免覆盖已有文件。
 
@@ -1427,6 +1438,83 @@ flowchart LR
 | Q13 | 表中句子类条目在生成时是“必须逐字使用”还是“推荐使用”？ | **已定**：句子类按推荐处理（含义一致时逐字复用）；术语必须使用；Review 中句子未复用只报 `info`（R4） |
 | Q14 | 模型下载/安装失败时如何处理？是否支持离线安装？ | **已定**：任何失败都自动降级为无向量模式，不影响流程（2.5.6.7）；支持离线安装包和文件夹安装，可从已安装机器导出离线包（2.5.6.6） |
 | Q15 | 是否提供 WASM 后备运行时（安装包约 +10 MB，推理慢 2–4 倍）？ | **已定**：提供兼容模式，默认 `auto`（原生失败自动切换），可手动指定（2.5.6.8） |
+| Q16 | 原生/兼容两种后端的向量一致性门槛？ | **已定（P0-5 实测后）**：int8 量化下最小余弦 0.998634，达不到 0.999；改为 **≥ 0.995 且 top-1↔top-5 候选互换性 ≥ 95%**（实测 98–100%），切换后端不重建索引 |
+| Q17 | 兼容模式（WASM）的内存预算？ | **已定（P0-5 实测后）**：Electron worker 内 648–813 MB，与线程数弱相关；**400 MB 预算仅适用于原生后端**，兼容模式固定 `numThreads=1`、空闲卸载时终止 worker，并在模型卡片提示内存占用较高 |
+
+### 7.1 P0 执行记录（2026-11-08）
+
+| # | 任务 | 产出 | 结论 |
+|---|---|---|---|
+| P0-1 | 真实样例 Excel（表头样式/重复/空行） | `test/mock-case-02/glossary-sample.xlsx`（3 sheet）+ `glossary-sample.csv` + `glossary-legacy.csv` + `manifest.json` + 生成脚本 | 覆盖 G1/G2 全部差异：横幅行 + `No./en-US/zh-CN` 表头、文件内重复/冲突、空行、缺 zh-CN、零宽/NBSP、富文本、无表头 sheet、旧三列 sheet。真值统计 `new 10 / dupInFile 4 / conflictInFile 1 / invalid 1` |
+| P0-2 | 确认第 7 节待确认问题 | 本节 | Q1–Q9 采用“默认假设”执行；Q10–Q15 已定；新增 Q16（一致性门槛）、Q17（兼容模式内存）并在 P0-5 实测后定稿 |
+| P0-3 | 决定测试方式 | `vitest@3.2.7` + `vitest.config.mts` + `npm run test:unit` | 纯模块用 vitest（`test/unit/**`），需要 SQLite/Electron 的仍走 Electron 脚本；`tsc --noEmit` 已覆盖 `test/**/*.ts` |
+| P0-4 | 评测集 + 基线召回 | `test/glossary-eval/`（111 条术语、4 份材料、66 条标注）+ `scripts/eval-glossary.mjs` + `npm run eval:glossary` | 现状基线（全量注入前 500 条 / 4000 条）**可注入召回 24.2%**、token 浪费 95.4%；选择性引擎的 L1/L2 上限 93.9%；4 条概念级期望需 L4/L5 |
+| P0-5 | 本地 embedding spike | `test/spike-embedding/`（下载/分词/推理/质量/Electron worker/打包检查）+ 报告 | **GO**：性能、内存（原生）、降级、打包全部通过；纯 JS 分词器 290/290 对齐；双语索引 + 短候选查询下 L4 短查询 R@1 91% / R@5 100%，概念级 R@5 100%（L1/L2 为 0）；两处指标按实测修订（Q16/Q17） |
+
+P0-5 的详细数据与实施建议见 [p0-5-embedding-spike-report.md](./p0-5-embedding-spike-report.md)。
+
+### 7.2 P2b / P2c 执行记录（2026-11-08）
+
+| # | 任务 | 产出 | 说明 |
+|---|---|---|---|
+| P2b-1 | 模型清单 + 安装器 | `embedding/model-manifest.json`、`embedding/model-manifest.ts`、`embedding/model-installer.ts`、`embedding/zip.ts` | 三渠道共用「暂存 → 校验 → 试推理 → 原子启用」；离线包与文件夹安装、导出离线包、启动清理残留 staging。**未引入 `yauzl`**：用内置 `zlib` 实现了受控的 ZIP 读写（zip-slip / zip-bomb / 白名单文件名全部校验），避免新增依赖。 |
+| P2b-1a | 语义能力门 | `embedding/semantic-capability.ts` | `isAvailable()` / `unavailableReason` / `withSemanticFallback()` / 连续 2 次失败熔断 + 手动 reset。 |
+| P2b-2 | 推理后端 | `embedding/tokenizer.ts`、`embedding/backends/{types,native-backend,wasm-backend,require-optional}.ts`、`embedding/local-embedder.ts` | 分词器为 P0-5 实现的 TS 移植；两个后端共用分词/pooling/归一化与自检。**后端模块用惰性 `require()` 加载**：`onnxruntime-node` 在缺 VC++ 运行库时会在模块加载阶段抛错，静态 import 会让主进程启动崩溃。`vite.main.config.ts` 已把两个 ORT 包加入 `external`。 |
+| P2b-3 | 向量索引任务 | `embedding-job.ts`、`index/vector-index.ts` | 按 `content_hash` 增量、分批（wasm 8 / native 32）、`setImmediate` 让出、可暂停、进度广播、重启续跑。 |
+| P2b-4 | 服务接入 | `glossary.service.ts` | `resolve()` 增加 L4 证据（短候选查询、translation 仅句子类）、`resolveSync` 保持 L1–L3；`getStatus()` 输出 `l1-l3`/`l1-l4` 与模型状态；导入后 `refreshEmbeddings()`。**推理在主进程以异步 `session.run()` 执行**（不阻塞事件循环），未单独开推理 worker。 |
+| P2b-5 | IPC / UI | `ipc/glossary.ipc.ts`、preload、`api/glossary.api.ts`、`mapping.store.ts`、`GlossaryModelCard.tsx` | 模型卡片显示状态/后端/维度/向量进度，提供下载、取消、安装包、文件夹、导出、校验、重试、删除、重试原生后端、启用开关与后端选择。 |
+| P2b-6 | 离线包脚本 | `scripts/build-model-package.mjs` + `npm run model:package` | 按内置清单下载并校验 SHA-256 后打包，可挂到 Release。`release.yml` 暂未接入（避免影响现有发布流程）。 |
+| P2c-1 | FileParser terms | `output-contracts.ts`、`document.types.ts`、prompts | `fileExtractionContract` 新增 `terms[]`（surface/lang/englishGuess/context），解析容错（缺失即空数组），`buildFileParserPrompt` 说明其用途。 |
+| P2c-2 | 兜底抽取 | `agents/term-extractor.agent.ts` | 分块 4000、并发 3、按 chunk hash 缓存（64 条 LRU）、候选去重合并。 |
+| P2c-3 | 灰区裁决 | `agents/glossary-adjudicator.agent.ts` | 每批 ≤ 50、结构化输出 + 校验（拒绝未提供的 entryId）、失败只记日志不抛错。 |
+| P2c-4 | 提示词注册 | `prompts/index.ts`、`prompts.types.ts`、`i18n/en.ts` | 新增 `termExtractor` / `glossaryAdjudicator` 两个可配置提示词与目录条目（分组「Glossary」）。 |
+| P2c-5 | 写作入口 | `glossary.service.ts#resolveForWriting` | 返回 `GlossaryWritingResolveResult`（hits + candidates + semanticUsed + grayCount），供 P3 的 `runAnalyzeStage` 直接调用。 |
+
+验证：`npx tsc --noEmit` clean；`npm run test:unit` **150 passed**（新增 `glossary-semantic` / `glossary-zip` / `glossary-l5` 共 20 条）；renderer vite build 通过；主进程 esbuild 打包解析通过（含 JSON 清单导入）。
+
+### 7.3 P3 / S3 执行记录（2026-11-08）
+
+| # | 任务 | 产出 | 说明 |
+|---|---|---|---|
+| P3-1 | 状态与注入链路 | `DocGenState.useGlossary/glossaryVersion/glossaryHits`、`WorkflowStateAnnotation`、`NodeRuntime.glossary`、`PipelineConfig.glossary`、`WorkflowEngine.setGlossaryService`、`main/index.ts` 注入、`loadMirror` 回填、`WorkflowStartPayload.useGlossary` | 项目级开关从 InputPanel → IPC → engine 一路贯通；老状态缺字段时默认启用。 |
+| P3-2 | analyze → writer | `pipeline.runAnalyzeStage` 结束时调用 `resolveForWriting`（FileParser `terms[]` + L1–L5），`runDraftStage` 用 `buildPromptBlock('writing')` 注入；`WriterAgent` 新增 `glossaryBlock`；`aiEditDraft` 同步注入 | 只注入 `userState !== 'removed'` 的条目。 |
+| P3-2a | 人工确认面板 | `GlossaryHitsPanel.tsx` + `glossary:entries` IPC + `reviewContinue.editedGlossaryHits` | 取消勾选（removed）、B→A（confirmed）、搜索术语库新增（added）。 |
+| P3-3 | 规则层 | `checker.ts` 新增 R1（源概念未落地）、R2（写法变体，一键替换）、R4（句子未复用），保留 R3；`GlossaryService.checkDraft/checkLocalized` 输出 `ReviewComment(origin='glossary')` | 只报 Tier A；R2 因可精确定位而优先于 R1。 |
+| P3-4 | Reviewer 接入 | `ReviewerAgent` 新增 `glossaryBlock/ruleComments/chunkThresholdChars`；`buildReviewUserPrompt` 注入术语块；`mergeRuleComments` 去重；>20k 字符按章节分块评审 | `ai_review`、`dita_ai_review`、`localize_ai_review`、`post_edit_review` 均接入。 |
+| P3-5 | UI | `ReviewComment.origin`；`ReviewPanel`/`ReviewCommentsView` 显示 📚 徽标与「仅术语问题」筛选；`InputPanel` 增加「使用术语库」开关 | — |
+| P3-6 | 提示词说明 | `PROMPT_CATALOG` 文案注明术语块由系统注入、不可在提示词设置中删除 | — |
+| S2 | 拆分 IPC/UI | `file:splitPreview` / `file:splitExport`；`SplitExportModal.tsx`；`OutputPanel` 拆分入口 | 主进程取 state、目录对话框、子目录去重、`wx` 写入、逐文件校验、`documentId` 关联。 |
+| S3-1 | DOCX 修复 | 新增 `dita-to-markdown.ts`；`runExportStage` 改用 `buildDocx({ ...doc, content: ditaToMarkdown(...) })` | DOCX 不再是 XML 文本。 |
+| S3-2 | 拆分 DOCX | `buildDocx(draft, { headerText })` 支持 Word 页眉；拆分导出可选 DOCX，标题与页眉一致 | — |
+| S3-3 | 本地化拆分 | `localize:splitPreview` / `localize:splitExport` + DONE 视图「✂️ 按章节拆分」 | 复用同一 `SplitExportModal`。 |
+
+验证：`npx tsc --noEmit` clean；`npm run test:unit` **167 passed**（新增 `glossary-checker` / `dita-to-markdown` / `split-document` 共 15 条）；renderer vite build 通过；主进程 esbuild 打包通过；临时脚本验证拆分文件合法、DITA→Markdown 与 DOCX（zip 头 `504b`）生成正常。
+
+### 7.4 P4 体验完善执行记录（2026-11-08）
+
+| # | 任务 | 产出 | 说明 |
+|---|---|---|---|
+| P4-1 | 备份列表与一键恢复 | `MappingService.listBackups/restoreBackup`、IPC `mapping:backups` / `mapping:restore`、`MappingPanel` 维护区 | 恢复前先备份当前表，因此恢复本身可回退；渲染层只传**文件名**（正则校验 + 目录断言），不接受任意路径。 |
+| P4-2 | 导入批次撤销 | `glossary_import_batches.snapshot_json` / `undone_at`、`listBatches/undoBatch`、IPC `mapping:batches` / `mapping:batchUndo` | 追加批次按「插入 id + 更新前整行」精确回滚；替换批次改用其备份文件恢复。 |
+| P4-3 | analyze 阶段注入术语 | `GlossaryService.buildAnalyzeContext`、`buildAnalyzerUserPrompt(..., glossaryBlock)`、`AnalyzerAgent` 注入 | 确定性（L1–L3，无额外 AI 调用）；开关 `analyzeInjection`，默认开。 |
+| P4-4 | 术语使用报告 | `glossary/usage-report.ts`、`GlossaryService.buildUsageReport`、IPC `glossary:usageReport`、`GlossaryUsageReportModal`、导出阶段日志 | 分类 `used` / `variant` / `missing` + 禁用写法命中；missing 排在最前。 |
+| P4-5 | 架构文档 | `04-ai-layer.md` §4.7、`05-file-processing.md` §5.5、`06-storage-ipc.md` §6.8、`07-renderer.md` §7.8、`08-data-models.md` §8.6 | — |
+| P4-6 | “Do not use” 列 | `file-parser` 逻辑列 `forbidden` + `parseForbiddenCell`、`do_not_use` 列、deduper 传递、`checker.checkForbiddenTerms`（R7）、导入/导出/列表 UI | 禁用写法**不进入**匹配索引；R7 产出可一键替换的 suggestion。 |
+| P4-7 | 向量索引快照 + ANN | `index/vector-snapshot.ts`、`GlossaryEmbeddingJob` 快照加载/保存、`VectorIndex` 可选 HNSW（`hnswlib-node` 惰性 `require`） | 指纹 = model + dims + 全部 `(entry_id, content_hash)`；快照不匹配即回退读取 SQLite。HNSW 未安装时保持暴力点积（默认安装即此路径）。 |
+| P4-8 | Writer 工具调用查询（L5c） | `AIToolDefinition/AIToolCall/AIToolCallResult`、`AIProvider.completeWithTools?`、`OpenAIProvider.completeWithTools`、`BaseAgent.callLLMWithTools`、`WriterAgent` `glossary_lookup` | 默认关闭（`writerToolLookup=false`）；provider 不支持 function calling 时自动回退普通 prompt 路径。 |
+
+验证：`npx tsc --noEmit` clean；`npm run test:unit` **184 passed**（新增 `glossary-p4.test.ts` 17 条：禁用写法解析/去重、R7 检查、使用报告分类、向量快照往返与指纹失效）；renderer vite build 通过；主进程 esbuild bundle 通过。
+
+未做/限制：快照只覆盖内存矩阵，不含 HNSW 图（重建 HNSW 仍需线性插入）；`writerToolLookup` 走非流式通道（开启时草稿阶段无流式 thinking 展示）；备份目录保留全部历史文件，未做自动清理。
+
+### 7.5 导出修复（2026-11-08）
+
+| # | 问题 | 根因 | 修复 | 涉及文件 |
+|---|---|---|---|---|
+| E1 | ZIP 下载包里没有章节拆分文件 | `file:downloadZip` 只打包 `state.outputDocuments`（完整 `.dita`/`.docx`），拆分文件仅在 `file:splitExport` / `file:exportBundle` 落盘 | 新增 `collectDitaSources`（优先 `ditaDocuments`，老项目回退读取已导出的 `.dita`）与 `collectSplitZipEntries`：每个文档写入 `<Title>_sections/NN_Title.dita` + `.ditamap`；`createZip` 支持 `folder/file.ext` 嵌套名并自动补目录条目（`isSafeZipPath` 逐段校验，仍拦截 zip-slip/绝对路径/反斜杠）。`file:exportAll` 同样输出 `_sections/`。`file:downloadZip` 返回 `DownloadZipResult{filePath,entries,sectionFiles,sectionFolders}`，`OutputPanel` 显示条目数、章节文件数与「显示出文件」 | `ipc/file.ipc.ts`、`glossary/embedding/zip.ts`、`shared/types/ipc.types.ts`、`preload/api.types.ts`、`OutputPanel.tsx`、`i18n/en.ts` |
+| E2 | 导出的 `.docx` 用 Word 打开报“文件已损坏” | `buildDocx` 的编号列表写 `numbering: { reference: 'default-numbering' }` 却从未在 `Document` 里定义该引用，docx 遂输出 `w:numId w:val="{default-numbering-0}"`；`w:numId` 必须是整数，Word 因此判定文档损坏。此外 `\r\n` 未归一、XML 非法控制字符未清理、内联 Markdown 标记（`**b**`/`` `code` ``/`[t](u)`）会字面输出 | 有序列表改为**每个列表一套真实编号定义**（`LevelFormat.DECIMAL` + `ordered-list-N` 引用，`currentList` 判新列表）；新增 `sanitizeText`（`\r\n`→`\n`、剔除 `\u0000-\u0008/\u000B/\u000C/\u000E-\u001F`）；新增 `inlineToRuns` 转换粗体/斜体/行内代码/删除线/外链（相对 DITA 引用退化为文本 + `(href)`）；围栏代码块输出 Consolas 等宽段落；空行折叠不留尾空段；新增“Page X of Y”页脚（`pageNumbers:false` 可关） | `document-builder/docx.builder.ts` |
+
+验证：`npx tsc --noEmit` clean；`npm run test:unit` **200 passed**（新增 `test/unit/docx-builder.test.ts` 5 条：编号为整数且与 `numbering.xml` 对应、内联 Markdown 转换、代码块等宽、非法字符剔除、页眉文本；`glossary-zip.test.ts` 新增 `isSafeZipPath` 与嵌套目录条目用例）；renderer vite build + main esbuild bundle 通过；用 `test/mock-case-01/esp32-pwm.dita` 实跑：ZIP 内含 6 个 `01_…06_*.dita` + `.ditamap`（Windows `Expand-Archive` 解出目录结构正确，7 个 DITA 均 XML 合法），DOCX 的 `w:numId` 均为整数且与 `numbering.xml` 一一对应，`[Content_Types].xml` 声明 `footer1.xml`，`WindowsBase` 以 OPC 包打开全部部件成功。
 
 ---
 

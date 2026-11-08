@@ -110,9 +110,9 @@ CREATE UNIQUE INDEX idx_translation_mappings_en ON translation_mappings(en COLLA
 | `file:select` | invoke | `dialog.showOpenDialog` 多选，扩展名过滤器含全部支持格式；选中文件注册进 `PathGuard` 白名单 |
 | `file:read` | invoke | `PathGuard` 白名单校验（用户选中文件 + `userData/projects` + RAG 目录，扩展名限文本/代码）后 UTF-8 读取（预览用） |
 | `file:showInFolder` | invoke | `shell.showItemInFolder` |
-| `file:downloadZip` | invoke | 保存对话框 + archiver 打 ZIP |
+| `file:downloadZip` | invoke | 保存对话框 + `createZip` 打 ZIP；包含完整 `.dita`/`.docx` 与每个文档的 `<Title>_sections/` 章节文件（返回 `DownloadZipResult`） |
 | `file:saveDita` | invoke | 另存单个 DITA/DOCX 文件（按 format 选过滤器） |
-| `file:exportAll` | invoke | 选目录批量复制输出文件 |
+| `file:exportAll` | invoke | 选目录批量复制输出文件 + 每个文档的 `_sections/` 章节拆分文件 |
 
 ### RAG 组（5，`rag.ipc.ts`）
 
@@ -173,6 +173,18 @@ flowchart LR
     T -->|"declare global Window + ElectronAPI"| W
 ```
 
-暴露面：`workflow`（13）· `file`（6）· `rag`（5）· `settings`（3）· `app`（1）· `prompts`（3）· `projects`（4）· `localization`（12）· `mapping`（7）。事件订阅返回**取消订阅函数**（`ipcRenderer.removeListener`），供 React effect 清理。
+暴露面：`workflow`（13）· `file`（6）· `rag`（5）· `settings`（3）· `app`（1）· `prompts`（3）· `projects`（4）· `localization`（12）· `mapping`（11）· `glossary`（11）。事件订阅 返回**取消订阅函数**（`ipcRenderer.removeListener`），供 React effect 清理。
 
-安全约定：渲染进程**只允许**通过 `window.electronAPI` 通信；`api.types.ts` 同时声明 `Window` 全局类型供 TypeScript 校验。
+安全约定：渲染进程**只允许**通过 `window.electronAPI` 通信；`api.types.ts` 同时 声明 `Window` 全局类型供 TypeScript 校验。
+
+## 6.8 术语库的备份、批次撤销与向量快照（P4）
+
+| 存储 | 位置 / 列 | 说明 |
+|---|---|---|
+| 备份文件 | `userData/backups/glossary-<timestamp>.json` | 替换导入（`replace`）前自动写入；`mapping:backups` 列出，`mapping:restore` 按**文件名**恢复（恢复前先备份当前表） |
+| 导入批次 | `glossary_import_batches(id, file_name, mode, stats_json, backup_path, snapshot_json, undone_at, created_at)` | `snapshot_json` 记录本批次插入的 id 与更新前的整行，`mapping:batchUndo` 据此精确撤销（`replace` 批次改用备份文件恢复） |
+| 禁用写法 | `translation_mappings.do_not_use`（`TEXT NOT NULL DEFAULT ''`，JSON 数组） | P4-6；旧库由 `ensureColumn` 幂等新增 |
+| 向量快照 | `userData/cache/glossary-vectors-<model>-<dims>.bin` | P4-7；指纹 = model + dims + 全部 `(entry_id, content_hash)`，不匹配即重建 |
+| 向量索引 | `glossary_embeddings` + `VectorIndex` | 超过 10 万条且安装了可选 `hnswlib-node` 时自动升级 HNSW，否则暴力点积 |
+
+迁移全部幂等（`ensureColumn` 先查 `PRAGMA table_info`），无数据丢失风险。

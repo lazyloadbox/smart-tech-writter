@@ -103,6 +103,16 @@ export interface DocGenState {
   parseInstruction?: string;
   /** @deprecated Retained for persisted-state compatibility; Gen Doc always builds DITA from reviewed drafts. */
   skipLocalization: boolean;
+  /**
+   * Project-level glossary switch (P3). The global switch lives in
+   * `GlossarySettings.enabled`; this one lets a single project opt out.
+   * Missing on older persisted states → treated as enabled.
+   */
+  useGlossary?: boolean;
+  /** Glossary index version used for the last analysis (P3). */
+  glossaryVersion?: number;
+  /** Tiered glossary hits resolved from the source material (P3, design §2.5.8). */
+  glossaryHits?: import('./glossary.types').GlossaryHit[];
   /** Accumulated workflow logs */
   workflowLogs: WorkflowLogEntry[];
   currentStage: StageName;

@@ -121,4 +121,10 @@ userData/projects/<projectId>/<安全文件名>.docx
 - DITA 写入前经 `validateDitaXml` 校验（XML 声明/单根/标签配对/未转义字符检查），校验失败输出警告；
 - 写入经 `writeProjectBinaryFile(projectId, fileName, buffer)`；
 - 结果注册为 `OutputDocument{id,title,fileName,filePath,format:'dita'|'docx',size,createdAt}`；
-- 用户级导出：`file:saveDita`（另存对话框，按 format 选过滤器 + copyFileSync）、`file:exportAll`（选目录 + 批量 copyFileSync）、`file:downloadZip`（archiver zip 打包全部）。
+- 用户级导出：`file:saveDita`（另存对话框，按 format 选过滤器 + copyFileSync）、`file:exportAll`（选目录 + 批量 copyFileSync + 每个 DITA 文档的 `_sections/` 章节拆分文件）、`file:downloadZip`（内置 `glossary/embedding/zip.ts` 的 `createZip` 打包：完整 `.dita`/`.docx` + 每个文档的 `<Title>_sections/` 章节 `.dita` 与 `.ditamap`，返回 `DownloadZipResult`）。
+
+## 5.5 术语导入的 “Do not use” 列（P4-6）
+
+- `glossary/file-parser.ts` 新增逻辑列 `forbidden`，表头别名包含 `Do not use` / `forbidden` / `avoid` / `deprecated` / `禁用写法` / `禁用` 等；单元格可用换行、`;`、`|`、`、` 分隔多个写法（`parseForbiddenCell`）。
+- 列未出现时不改变任何行，旧文件与旧三列格式完全兼容；`ParsedGlossaryRow.doNotUse` 经去重器进入 `ImportInsertOperation/ImportUpdateOperation`，存入 `translation_mappings.do_not_use`（JSON 字符串数组）。
+- 禁用写法**不进入**匹配索引（不会被当作推荐术语注入），仅由 `checker.checkForbiddenTerms`（R7）对照显式清单报告，并产出一键替换建议。
