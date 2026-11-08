@@ -1,0 +1,39 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontSize: 15px
+    fontFamily: "Microsoft YaHei, Segoe UI, sans-serif"
+  flowchart:
+    nodeSpacing: 30
+    rankSpacing: 32
+---
+flowchart LR
+    subgraph C1["阶段一 · 内容生产"]
+        direction TB
+        A1(["① 上传资料<br/>选文件 · 定大纲"])
+        A2["② AI 解析材料<br/>读懂每份原件"]
+        A3["③ AI 提炼要点<br/>要点 · 术语"]
+        A4["④ AI 生成草稿<br/>按大纲成文"]
+        A5{"⑤ 人工审阅<br/>改稿 · 提意见"}
+        A1 --> A2 --> A3 --> A4 --> A5
+    end
+
+    subgraph C2["阶段二 · 质检交付"]
+        direction TB
+        B1["⑥ AI 质量检查<br/>给出修改建议"]
+        B2{"⑦ 人工定稿<br/>确认最终内容"}
+        B3["⑧ 转 DITA 结构<br/>标准 XML"]
+        B4(["⑨ 导出交付<br/>.dita + .docx"])
+        B1 --> B2 --> B3 --> B4
+    end
+
+    C1 --> C2
+
+    classDef human fill:#FFF4D6,stroke:#D89A00,stroke-width:2px,color:#6B4E00
+    classDef ai fill:#E6F2FF,stroke:#1F7AE0,stroke-width:1.5px,color:#0B3E6B
+    classDef io fill:#E8F7EE,stroke:#2E9E5B,stroke-width:2px,color:#14532D
+
+    class A5,B2 human
+    class A2,A3,A4,B1,B3 ai
+    class A1,B4 io

@@ -1,0 +1,64 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontSize: 14px
+    fontFamily: "Microsoft YaHei, Segoe UI, sans-serif"
+  flowchart:
+    nodeSpacing: 24
+    rankSpacing: 60
+    curve: basis
+---
+flowchart LR
+    subgraph L1["① 界面层"]
+        direction TB
+        U1["总览工作台"]
+        U2["文档生成"]
+        U3["DITA 本地化"]
+        U4["设置与提示词"]
+        U1 ~~~ U2 ~~~ U3 ~~~ U4
+    end
+
+    subgraph L2["② 通信层"]
+        direction TB
+        B1["安全桥<br/>请求 / 事件"]
+    end
+
+    subgraph L3["③ 服务层"]
+        direction TB
+        S1["工作流引擎"]
+        S2["本地化服务"]
+        S3["语义检索"]
+        S4["文档构建"]
+        S1 ~~~ S2 ~~~ S3 ~~~ S4
+    end
+
+    subgraph L4["④ AI 能力层"]
+        direction TB
+        A1["智能体集群"]
+        A2["模型接入"]
+        A1 ~~~ A2
+    end
+
+    subgraph L5["⑤ 数据与外部"]
+        direction TB
+        D1["项目文件"]
+        D2["本地数据库"]
+        D3["大模型 API"]
+        D1 ~~~ D2 ~~~ D3
+    end
+
+    L1 -->|操作| L2
+    L2 -->|调用| L3
+    L3 -->|驱动| L4
+    L4 -->|访问| L5
+
+    classDef ui fill:#E6F2FF,stroke:#1F7AE0,stroke-width:1.5px,color:#0B3E6B
+    classDef svc fill:#F3ECFF,stroke:#7B4FD6,stroke-width:1.5px,color:#3B1E73
+    classDef ai fill:#E9FBF0,stroke:#2E9E5B,stroke-width:1.5px,color:#14532D
+    classDef data fill:#FFF4D6,stroke:#D89A00,stroke-width:1.5px,color:#6B4E00
+
+    class U1,U2,U3,U4,B1 ui
+    class S1,S2,S3,S4 svc
+    class A1,A2 ai
+    class D1,D2,D3 data

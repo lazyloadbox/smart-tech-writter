@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import log from 'electron-log';
+import { randomUUID } from 'node:crypto';
 import type { AIProvider, AIMessage, AIStreamChunk, CompletionOptions, ProviderConfig, ReasoningEffort } from './base.provider';
 
 /**
@@ -11,6 +12,39 @@ import type { AIProvider, AIMessage, AIStreamChunk, CompletionOptions, ProviderC
  */
 export const DEFAULT_MAX_TOKENS = 128000;
 
+/**
+ * OpenCode Go/Console requires a stable per-conversation session id in this
+ * header; without it the request is rejected with HTTP 400:
+ * "Request is missing x-opencode-session and cannot be routed efficiently."
+ * @see https://opencode.ai/docs/console/go/#where-can-i-use-it
+ */
+export const OPENCODE_SESSION_HEADER = 'x-opencode-session';
+
+/**
+ * OpenCode asks clients to identify themselves with their own user agent
+ * rather than a generic SDK/HTTP-library name.
+ */
+export const OPENCODE_USER_AGENT = 'smart-tech-writer/1.0';
+
+/**
+ * Stable session id for this app process. Keeping it at module scope means a
+ * provider re-created from the settings screen (reloadProvider) keeps routing
+ * to the same session, and `OPENCODE_SESSION_ID` can pin it explicitly.
+ */
+const OPENCODE_SESSION_ID = process.env.OPENCODE_SESSION_ID?.trim() || `stw-${randomUUID()}`;
+
+/** Only OpenCode-hosted base URLs get the extra session/UA headers. */
+export function isOpenCodeEndpoint(baseURL?: string): boolean {
+  if (!baseURL) return false;
+  try {
+    const host = new URL(baseURL).hostname.toLowerCase();
+    return host === 'opencode.ai' || host.endsWith('.opencode.ai');
+  } catch {
+    // Not an absolute URL (e.g. a bare path) — never assume OpenCode.
+    return false;
+  }
+}
+
 export class OpenAIProvider implements AIProvider {
   readonly providerName = 'openai';
   private client: OpenAI;
@@ -18,12 +52,31 @@ export class OpenAIProvider implements AIProvider {
   private reasoningEffort?: ReasoningEffort;
 
   constructor(config: ProviderConfig) {
-    // Use a placeholder if apiKey is empty to prevent the SDK from throwing at
-    // construction time; actual requests will fail with a clear auth error instead.
-    this.client = new OpenAI({
-      apiKey: config.apiKey || 'NOT_CONFIGURED',
-      baseURL: config.baseURL || undefined,
-    });
+    const openCode = isOpenCodeEndpoint(config.baseURL);
+    if (openCode) {
+      const baseURL = config.baseURL!;
+      // Non-OpenCode endpoints must not receive these headers: many
+      // OpenAI-compatible servers reject unknown request headers/agents.
+      this.client = new OpenAI({
+        apiKey: config.apiKey || 'NOT_CONFIGURED',
+        baseURL,
+        defaultHeaders: {
+          [OPENCODE_SESSION_HEADER]: config.sessionId?.trim() || OPENCODE_SESSION_ID,
+          'user-agent': OPENCODE_USER_AGENT,
+        },
+      });
+      log.info('[WF][AI] OpenCode endpoint detected; session header enabled', {
+        baseURL,
+        sessionId: config.sessionId?.trim() || OPENCODE_SESSION_ID,
+      });
+    } else {
+      // Use a placeholder if apiKey is empty to prevent the SDK from throwing at
+      // construction time; actual requests will fail with a clear auth error instead.
+      this.client = new OpenAI({
+        apiKey: config.apiKey || 'NOT_CONFIGURED',
+        baseURL: config.baseURL || undefined,
+      });
+    }
     this.defaultModel = config.defaultModel ?? 'gpt-4o';
     this.reasoningEffort = config.reasoningEffort;
   }

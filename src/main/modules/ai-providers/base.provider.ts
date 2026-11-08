@@ -50,6 +50,12 @@ export interface ProviderConfig {
   baseURL?: string;
   defaultModel?: string;
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Optional stable conversation id. Only used by providers that need it for
+   * routing / prompt caching (currently the OpenCode `x-opencode-session`
+   * header); ignored by everything else.
+   */
+  sessionId?: string;
 }
 
 export type ProviderType = 'openai' | 'anthropic' | 'ollama';

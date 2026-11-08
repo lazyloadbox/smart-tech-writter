@@ -1,0 +1,37 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontSize: 15px
+    fontFamily: "Microsoft YaHei, Segoe UI, sans-serif"
+  flowchart:
+    nodeSpacing: 34
+    rankSpacing: 42
+    curve: basis
+---
+flowchart TD
+    A(["① 上传资料"])
+    B["② AI 解析材料"]
+    C["③ AI 提炼要点"]
+    D["④ AI 生成草稿"]
+    E{"⑤ 人工审阅"}
+    F["⑥ AI 质量检查"]
+    G{"⑦ 人工定稿"}
+    H["⑧ 转 DITA 结构"]
+    I(["⑨ 导出交付"])
+
+    A --> B --> C --> D --> E
+    E -->|满意| F
+    E -->|继续改| D
+    F --> G
+    G -->|通过| H
+    G -->|退回| D
+    H --> I
+
+    classDef human fill:#FFF4D6,stroke:#D89A00,stroke-width:2px,color:#6B4E00
+    classDef ai fill:#E6F2FF,stroke:#1F7AE0,stroke-width:1.5px,color:#0B3E6B
+    classDef io fill:#E8F7EE,stroke:#2E9E5B,stroke-width:2px,color:#14532D
+
+    class E,G human
+    class B,C,D,F,H ai
+    class A,I io
